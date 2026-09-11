@@ -1,0 +1,57 @@
+# ------------------------------------------------------------------
+# IMedora — Docker Compose (scaffold only)
+#
+# This file defines the future service topology. No services are
+# implemented yet — build contexts and images will be added once
+# each service has a working starter application.
+# ------------------------------------------------------------------
+version: "3.9"
+
+services:
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    depends_on:
+      - backend
+    # Not yet implemented — placeholder service definition.
+
+  backend:
+    build:
+      context: ./backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    depends_on:
+      - database
+    # Not yet implemented — placeholder service definition.
+
+  ai:
+    build:
+      context: ./ai
+    ports:
+      - "8100:8100"
+    env_file:
+      - .env
+    depends_on:
+      - backend
+    # Not yet implemented — placeholder service definition.
+
+  database:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: imedora
+      POSTGRES_PASSWORD: imedora
+      POSTGRES_DB: imedora
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+
+volumes:
+  db_data:

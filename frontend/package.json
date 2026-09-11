@@ -1,0 +1,13 @@
+{
+  "name": "imedora-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "IMedora frontend — web application for biomedical device and maintenance management.",
+  "scripts": {
+    "dev": "echo \"TODO: configure dev server once framework is chosen\"",
+    "build": "echo \"TODO: configure build once framework is chosen\"",
+    "test": "echo \"TODO: configure test runner\""
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}
