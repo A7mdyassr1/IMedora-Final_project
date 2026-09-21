@@ -85,32 +85,40 @@ def run():
         schedule_id = cur.fetchone()[0]
 
         cur.execute(
-            """
-            INSERT INTO maintenance_tickets (organization_id, hospital_id, device_id, reported_by,
-                                              problem_description, priority, status)
-            VALUES (%s, %s, %s, %s, 'Abnormal pressure reading', 'high', 'resolved')
-            RETURNING id
-            """,
-            (org_id, hospital_id, device_id, technician_id),
+            "SELECT id FROM maintenance_tickets WHERE device_id = %s AND problem_description = %s",
+            (device_id, "Abnormal pressure reading"),
         )
-        ticket_id = cur.fetchone()[0]
+        existing_ticket = cur.fetchone()
+        if existing_ticket:
+            ticket_id = existing_ticket[0]
+        else:
+            cur.execute(
+                """
+                INSERT INTO maintenance_tickets (organization_id, hospital_id, device_id, reported_by,
+                                                  problem_description, priority, status)
+                VALUES (%s, %s, %s, %s, 'Abnormal pressure reading', 'high', 'resolved')
+                RETURNING id
+                """,
+                (org_id, hospital_id, device_id, technician_id),
+            )
+            ticket_id = cur.fetchone()[0]
 
-        cur.execute(
-            """
-            INSERT INTO ticket_assignments (ticket_id, user_id) VALUES (%s, %s)
-            ON CONFLICT DO NOTHING
-            """,
-            (ticket_id, technician_id),
-        )
+            cur.execute(
+                """
+                INSERT INTO ticket_assignments (ticket_id, user_id) VALUES (%s, %s)
+                ON CONFLICT DO NOTHING
+                """,
+                (ticket_id, technician_id),
+            )
 
-        cur.execute(
-            """
-            INSERT INTO maintenance_records (organization_id, hospital_id, device_id, maintenance_type_id,
-                                              ticket_id, performed_by, description)
-            VALUES (%s, %s, %s, %s, %s, %s, 'Recalibrated pressure sensor and replaced tubing')
-            """,
-            (org_id, hospital_id, device_id, corrective_type_id, ticket_id, technician_id),
-        )
+            cur.execute(
+                """
+                INSERT INTO maintenance_records (organization_id, hospital_id, device_id, maintenance_type_id,
+                                                  ticket_id, performed_by, description)
+                VALUES (%s, %s, %s, %s, %s, %s, 'Recalibrated pressure sensor and replaced tubing')
+                """,
+                (org_id, hospital_id, device_id, corrective_type_id, ticket_id, technician_id),
+            )
 
         cur.execute(
             "UPDATE devices SET next_maintenance_due_date = CURRENT_DATE + INTERVAL '90 days' WHERE id = %s",
