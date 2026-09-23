@@ -41,6 +41,18 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Existing data may already contain stale resolved/closed tickets without a
+    # resolution timestamp. Backfill them to the row's creation time before adding
+    # the new integrity check, otherwise the ALTER TABLE fails on those rows.
+    op.execute(
+        """
+        UPDATE maintenance_tickets
+        SET resolved_at = created_at
+        WHERE status IN ('resolved', 'closed')
+          AND resolved_at IS NULL
+        """
+    )
+
     op.create_index("ix_attachments_hospital_id", "attachments", ["hospital_id"])
     op.create_index("ix_maintenance_schedules_hospital_id", "maintenance_schedules", ["hospital_id"])
     op.create_index("ix_notifications_related_ticket_id", "notifications", ["related_ticket_id"])
