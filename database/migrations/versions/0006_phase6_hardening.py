@@ -41,24 +41,24 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Existing data may already contain stale resolved/closed tickets without a
-    # resolution timestamp. Backfill them to the row's creation time before adding
-    # the new integrity check, otherwise the ALTER TABLE fails on those rows.
-    op.execute(
-        """
-        UPDATE maintenance_tickets
-        SET resolved_at = created_at
-        WHERE status IN ('resolved', 'closed')
-          AND resolved_at IS NULL
-        """
-    )
-
     op.create_index("ix_attachments_hospital_id", "attachments", ["hospital_id"])
     op.create_index("ix_maintenance_schedules_hospital_id", "maintenance_schedules", ["hospital_id"])
     op.create_index("ix_notifications_related_ticket_id", "notifications", ["related_ticket_id"])
     op.create_index("ix_part_inventory_part_id", "part_inventory", ["part_id"])
     op.create_index("ix_ticket_assignments_ticket_id", "ticket_assignments", ["ticket_id"])
 
+    # Backfill first: any pre-existing 'resolved'/'closed' ticket seeded before
+    # this constraint existed (e.g. by an earlier version of seed_phase2.py)
+    # would otherwise fail ADD CONSTRAINT outright, since it validates every
+    # existing row. updated_at is the best available proxy for when it was
+    # actually resolved.
+    op.execute(
+        """
+        UPDATE maintenance_tickets
+        SET resolved_at = updated_at
+        WHERE status IN ('resolved', 'closed') AND resolved_at IS NULL
+        """
+    )
     op.execute(
         """
         ALTER TABLE maintenance_tickets

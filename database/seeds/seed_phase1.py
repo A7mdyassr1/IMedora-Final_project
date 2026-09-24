@@ -104,7 +104,10 @@ def run():
 
         conn.commit()
 
-        cur.execute("SELECT device_code, name, status, criticality FROM devices ORDER BY device_code")
+        cur.execute(
+            "SELECT device_code, name, status, criticality FROM devices WHERE hospital_id = %s ORDER BY device_code",
+            (hospital_id,),
+        )
         print("Seed complete:")
         for row in cur.fetchall():
             print(f"  {row[0]} - {row[1]} ({row[2]}, {row[3]})")

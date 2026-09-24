@@ -95,8 +95,8 @@ def run():
             cur.execute(
                 """
                 INSERT INTO maintenance_tickets (organization_id, hospital_id, device_id, reported_by,
-                                                  problem_description, priority, status)
-                VALUES (%s, %s, %s, %s, 'Abnormal pressure reading', 'high', 'resolved')
+                                                  problem_description, priority, status, resolved_at)
+                VALUES (%s, %s, %s, %s, 'Abnormal pressure reading', 'high', 'resolved', now())
                 RETURNING id
                 """,
                 (org_id, hospital_id, device_id, technician_id),
