@@ -1,0 +1,3 @@
+# IMedora Backend — Python dependencies
+# TODO: pin actual framework and library versions once chosen
+# (e.g. fastapi, uvicorn, sqlalchemy, alembic, pydantic, python-dotenv)
