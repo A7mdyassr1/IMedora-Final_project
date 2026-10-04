@@ -31,3 +31,7 @@ To be defined during the development phase.
 
 This project is currently private and under development.
 
+
+## Mobile app (Flutter)
+
+Companion app for hospital staff: scan a device QR code, report problems, follow tickets and notifications, and ask an AI assistant. It currently runs on mock data and will connect to the backend API later. See mobile/README.md.

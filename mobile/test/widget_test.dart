@@ -1,30 +1,52 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:imedora_final_project_main/main.dart';
+import 'package:imedora_mobile/app.dart';
+import 'package:imedora_mobile/core/storage/token_storage.dart';
+import 'package:imedora_mobile/features/ai_assistant/data/mock_ai_assistant_service.dart';
+import 'package:imedora_mobile/features/auth/data/mock_auth_repository.dart';
+import 'package:imedora_mobile/features/auth/presentation/auth_controller.dart';
+import 'package:imedora_mobile/features/devices/data/mock_device_repository.dart';
+import 'package:imedora_mobile/features/notifications/data/mock_notification_repository.dart';
+import 'package:imedora_mobile/features/profile/presentation/settings_controller.dart';
+import 'package:imedora_mobile/features/tickets/data/mock_ticket_repository.dart';
+
+import 'test_fakes.dart';
+
+class _TestTokenStorage implements TokenStorage {
+  @override
+  Future<void> clear() async {}
+
+  @override
+  Future<String?> read() async => null;
+
+  @override
+  Future<void> write(String token) async {}
+}
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  testWidgets('IMedora app builds successfully', (WidgetTester tester) async {
+    final authController = AuthController(
+      MockAuthRepository(),
+      _TestTokenStorage(),
+    );
+    await authController.restoreSession();
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    final deviceRepository = MockDeviceRepository();
+    final ticketRepository = MockTicketRepository(deviceRepository);
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+    await tester.pumpWidget(
+      ImedoraApp(
+        authController: authController,
+        deviceRepository: deviceRepository,
+        ticketRepository: ticketRepository,
+        notificationRepository: MockNotificationRepository(),
+        aiAssistantService:
+            MockAiAssistantService(deviceRepository, ticketRepository),
+        settingsController: SettingsController(MemorySettingsRepository()),
+      ),
+    );
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    expect(find.byType(MaterialApp), findsOneWidget);
   });
 }

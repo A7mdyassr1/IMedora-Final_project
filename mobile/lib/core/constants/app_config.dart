@@ -2,6 +2,7 @@ class AppConfig {
   AppConfig._();
 
   static const String appName = 'IMedora';
+  static const String appVersion = '0.1.0';
 
   /// Phase 1-8: everything runs on mock repositories.
   static const bool useMock = true;
