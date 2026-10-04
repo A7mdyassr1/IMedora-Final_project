@@ -191,7 +191,8 @@ class _DeviceBody extends StatelessWidget {
                       minimumSize: const Size.fromHeight(52)),
                   icon: const Icon(Icons.smart_toy_outlined),
                   label: const Text('Ask AI'),
-                  onPressed: () => context.go(AppRoutes.ai),
+                  onPressed: () => context
+                      .push(AppRoutes.assistantPath(deviceId: device.id)),
                 ),
               ],
             ),

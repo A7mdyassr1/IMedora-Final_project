@@ -10,6 +10,7 @@ import '../../../core/routing/app_router.dart';
 import '../../../core/widgets/state_views.dart';
 import '../../devices/domain/device.dart';
 import '../../devices/domain/device_repository.dart';
+import '../../notifications/presentation/notifications_controller.dart';
 import '../domain/ticket.dart';
 import '../domain/ticket_repository.dart';
 import 'tickets_controller.dart';
@@ -163,6 +164,7 @@ class _ReportProblemScreenState extends State<ReportProblemScreen> {
       ));
       if (!mounted) return;
       context.read<TicketsController>().load(silent: true);
+      context.read<NotificationsController>().load(silent: true);
       setState(() {
         _created = ticket;
         _submitting = false;

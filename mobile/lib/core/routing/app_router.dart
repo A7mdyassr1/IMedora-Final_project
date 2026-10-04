@@ -6,6 +6,8 @@ import '../../features/auth/presentation/forgot_password_screen.dart';
 import '../../features/auth/presentation/login_screen.dart';
 import '../../features/devices/presentation/device_overview_screen.dart';
 import '../../features/home/presentation/home_screen.dart';
+import '../../features/notifications/presentation/notifications_screen.dart';
+import '../../features/profile/presentation/notification_settings_screen.dart';
 import '../../features/profile/presentation/profile_screen.dart';
 import '../../features/qr_scanner/presentation/qr_scanner_screen.dart';
 import '../../features/tickets/presentation/device_tickets_screen.dart';
@@ -26,6 +28,11 @@ class AppRoutes {
   /// Full-screen routes (outside the bottom bar), opened with push.
   static const scan = '/scan';
   static const report = '/report';
+  static const notifications = '/notifications';
+  static const notificationSettings = '/settings/notifications';
+  static const assistant = '/assistant';
+  static String assistantPath({String? deviceId}) =>
+      deviceId == null ? assistant : '$assistant?deviceId=$deviceId';
   static String reportPath({String? deviceId}) =>
       deviceId == null ? report : '$report?deviceId=$deviceId';
   static const device = '/device/:id';
@@ -67,6 +74,20 @@ GoRouter buildRouter(AuthController auth) {
         path: AppRoutes.device,
         builder: (_, state) =>
             DeviceOverviewScreen(deviceId: state.pathParameters['id']!),
+      ),
+      GoRoute(
+        path: AppRoutes.notificationSettings,
+        builder: (_, _) => const NotificationSettingsScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.assistant,
+        builder: (_, state) => AiAssistantScreen(
+          deviceId: state.uri.queryParameters['deviceId'],
+        ),
+      ),
+      GoRoute(
+        path: AppRoutes.notifications,
+        builder: (_, _) => const NotificationsScreen(),
       ),
       GoRoute(
         path: AppRoutes.deviceTickets,

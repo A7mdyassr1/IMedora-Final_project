@@ -6,6 +6,8 @@ import '../../../core/routing/app_router.dart';
 import '../../../core/widgets/state_views.dart';
 import '../../auth/presentation/auth_controller.dart';
 import '../../tickets/presentation/ticket_tile.dart';
+import '../../notifications/presentation/notification_tile.dart';
+import '../../notifications/presentation/notifications_controller.dart';
 import '../../tickets/presentation/tickets_controller.dart';
 
 class HomeScreen extends StatelessWidget {
@@ -32,12 +34,25 @@ class HomeScreen extends StatelessWidget {
             child: ListView(
               padding: const EdgeInsets.all(20),
               children: [
-                Text(_greeting(),
-                    style: theme.textTheme.bodyLarge?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant)),
-                Text(user?.fullName ?? '',
-                    style: theme.textTheme.headlineSmall
-                        ?.copyWith(fontWeight: FontWeight.w700)),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(_greeting(),
+                              style: theme.textTheme.bodyLarge?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant)),
+                          Text(user?.fullName ?? '',
+                              style: theme.textTheme.headlineSmall
+                                  ?.copyWith(fontWeight: FontWeight.w700)),
+                        ],
+                      ),
+                    ),
+                    const _NotificationBell(),
+                  ],
+                ),
                 const SizedBox(height: 4),
                 Row(
                   children: [
@@ -94,11 +109,12 @@ class HomeScreen extends StatelessWidget {
                 ),
                 const _RecentTicketsSection(),
                 const SizedBox(height: 24),
-                const _SectionHeader(title: 'Notifications'),
-                const _InfoCard(
-                  icon: Icons.notifications_none,
-                  message: "You're all caught up.",
+                _SectionHeader(
+                  title: 'Notifications',
+                  actionLabel: 'See all',
+                  onAction: () => context.push(AppRoutes.notifications),
                 ),
+                const _NotificationsPreview(),
                 const SizedBox(height: 16),
               ],
             ),
@@ -241,6 +257,75 @@ class _RecentTicketsSectionState extends State<_RecentTicketsSection> {
         }
         return Column(
           children: [for (final t in c.tickets.take(3)) TicketTile(ticket: t)],
+        );
+    }
+  }
+}
+
+class _NotificationBell extends StatelessWidget {
+  const _NotificationBell();
+
+  @override
+  Widget build(BuildContext context) {
+    final unread = context.watch<NotificationsController>().unreadCount;
+    return IconButton(
+      tooltip: unread > 0 ? 'Notifications, $unread unread' : 'Notifications',
+      onPressed: () => context.push(AppRoutes.notifications),
+      icon: Badge(
+        isLabelVisible: unread > 0,
+        label: Text(unread > 99 ? '99+' : '$unread'),
+        child: const Icon(Icons.notifications_outlined),
+      ),
+    );
+  }
+}
+
+class _NotificationsPreview extends StatefulWidget {
+  const _NotificationsPreview();
+
+  @override
+  State<_NotificationsPreview> createState() => _NotificationsPreviewState();
+}
+
+class _NotificationsPreviewState extends State<_NotificationsPreview> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) context.read<NotificationsController>().ensureLoaded();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.watch<NotificationsController>();
+    switch (c.status) {
+      case LoadStatus.idle:
+      case LoadStatus.loading:
+        return const Padding(
+          padding: EdgeInsets.symmetric(vertical: 16),
+          child: LoadingView(message: 'Loading notifications...'),
+        );
+      case LoadStatus.error:
+        return ErrorView(
+          message: c.error ?? 'Unable to load notifications.',
+          onRetry: () => c.load(),
+        );
+      case LoadStatus.loaded:
+        if (c.items.isEmpty) {
+          return const _InfoCard(
+            icon: Icons.notifications_none,
+            message: "You're all caught up.",
+          );
+        }
+        return Card(
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            children: [
+              for (final n in c.items.take(3))
+                NotificationTile(notification: n),
+            ],
+          ),
         );
     }
   }

@@ -5,11 +5,14 @@ import '../domain/ticket_repository.dart';
 
 /// In-memory tickets (lost when the app restarts - it's a mock).
 class MockTicketRepository implements TicketRepository {
-  MockTicketRepository(this._devices) {
+  MockTicketRepository(this._devices, {this.onTicketCreated}) {
     _seed();
   }
 
   final DeviceRepository _devices;
+
+  /// Mock-only hook: the real backend creates the notification itself.
+  final void Function(Ticket ticket)? onTicketCreated;
   final List<Ticket> _tickets = [];
   int _counter = 1003;
 
@@ -143,6 +146,7 @@ class MockTicketRepository implements TicketRepository {
       ],
     );
     _tickets.insert(0, ticket);
+    onTicketCreated?.call(ticket);
     return ticket;
   }
 
