@@ -1,6 +1,6 @@
 # IMedora Backend
 
-REST API and core business logic for the IMedora platform. Web framework is TBD (e.g. FastAPI); the structure below is designed to stay valid regardless of the final choice.
+REST API and core business logic for the IMedora platform, built with FastAPI + SQLAlchemy 2.x on the existing PostgreSQL schema (owned by `database/migrations`, never created from the ORM).
 
 ## Structure
 
@@ -24,6 +24,17 @@ tests/             # Backend test suite
 - **Layered architecture**: `api` → `services` → `repositories` → `models`, keeping business logic out of route handlers and data access out of services.
 - **One domain, one set of files**: as each domain below is implemented, it should get its own module inside `api/`, `models/`, `schemas/`, `services/`, and `repositories/` (e.g. `api/devices.py`, `models/device.py`, etc.) so teams can work in parallel.
 
+## Running
+
+```bash
+pip install -r backend/requirements.txt        # from the repo root, venv active
+cd backend
+uvicorn app.main:app --reload                  # reads DATABASE_URL from the repo-root .env
+pytest                                         # set TEST_DATABASE_URL to include the PostgreSQL tests
+```
+
+Docs: `/docs`, `/redoc`. Health: `/health`, `/health/db`. Versioned prefix: `/api/v1`.
+
 ## Planned API Domains
 
 - Authentication
@@ -41,4 +52,4 @@ tests/             # Backend test suite
 
 ## Status
 
-No APIs, models, or business logic have been implemented yet — this is the initial scaffold only.
+**Phase B1 (foundation) done:** app factory, settings, PostgreSQL connection, session dependency, health endpoints, error handling, logging, CORS, `/api/v1` router. No domain APIs yet (auth is Phase B2).

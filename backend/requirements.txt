@@ -1,3 +1,14 @@
-# IMedora Backend — Python dependencies
-# TODO: pin actual framework and library versions once chosen
-# (e.g. fastapi, uvicorn, sqlalchemy, alembic, pydantic, python-dotenv)
+# IMedora Backend - Python dependencies
+# Version ranges follow the same style as ai/requirements.txt and database/requirements.txt.
+# psycopg2-binary matches the driver the database/ layer already uses (see .env.example).
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30,<1.0
+SQLAlchemy>=2.0,<3.0
+psycopg2-binary>=2.9,<3.0
+pydantic>=2.5,<3.0
+pydantic-settings>=2.1,<3.0
+python-dotenv>=1.0,<2.0
+
+# testing
+pytest>=8.0,<9.0
+httpx>=0.27,<1.0

@@ -25,7 +25,7 @@ if not db_url:
         "DATABASE_URL is not set. Copy .env.example to .env and fill in your "
         "local Postgres connection string before running Alembic."
     )
-config.set_main_option("sqlalchemy.url", db_url)
+config.set_main_option("sqlalchemy.url", db_url.replace("%", "%%"))
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
