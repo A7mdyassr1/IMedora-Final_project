@@ -1,33 +1,69 @@
-# IMedora AI Service
+# IMedora AI Subsystem — Local Setup
 
-A separate service/module for AI-driven capabilities, decoupled from the core backend so it can evolve independently (models, RAG pipelines, tool integrations, and future ML) without affecting core API stability.
+Independent from the backend (which doesn't exist yet) and from the
+database (no direct DB access - everything goes through `DataProvider`).
+Works today with zero external services via `MockDataProvider`.
 
-## Structure
+## 1. Install dependencies
 
-```
-agents/       # Agent definitions / orchestration logic
-rag/          # Retrieval-augmented generation: retrievers, indexing, knowledge base integration
-prompts/      # Prompt templates used by agents and tools
-tools/        # Tool definitions the agent can call (e.g. device lookup, ticket creation)
-services/     # Service-layer glue (API endpoints for the AI service, if run standalone)
-models/       # ML model artifacts / interfaces (future predictive maintenance)
-data/         # Local data used for retrieval or evaluation (gitignored — not for real data)
-evaluation/   # Evaluation scripts/datasets for agent and RAG quality
-tests/        # AI service test suite
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r ai/requirements.txt
 ```
 
-## Planned Capabilities
+## 2. Configure (optional for now)
 
-- **Conversational assistant** — help users report faults, answer device questions, retrieve device/maintenance information.
-- **RAG** — retrieval over medical device documentation and maintenance history.
-- **Tool calling** — structured actions such as creating tickets or pulling maintenance records.
-- **Maintenance recommendations** — initial, rule-based or LLM-assisted suggestions based on history.
-- **Future predictive maintenance** — machine learning models for failure prediction and anomaly detection, integrated via `models/` and `data/` without disrupting the agent/RAG layers.
+```bash
+cp ai/.env.example ai/.env
+```
 
-## Integration
+Every setting defaults to a mock implementation, so this step isn't
+required until a real LLM/embedding provider is wired up in a later
+phase.
 
-The AI service is intended to be consumed by the backend (as an internal service) and/or the frontend `ai-assistant` feature, via a well-defined API contract (to be documented in `docs/ai/`).
+## 3. Run the tests
 
-## Status
+```bash
+python -m pytest ai/tests/ -v
+```
 
-No agents, RAG pipelines, or ML models have been implemented yet — this is the initial scaffold only.
+## Everyday commands
+
+| Task | Command |
+|---|---|
+| Run all AI tests | `python -m pytest ai/tests/ -v` |
+| Run just one phase's tests | `python -m pytest ai/tests/test_models.py -v` |
+| Get a working DataProvider in a script/REPL | `from ai.services.data.factory import get_data_provider` |
+
+## Progress
+
+- **Phase AI-1 (done):** full `ai/` folder skeleton; 18 Pydantic models
+  in `ai/models/` (status/priority/risk fields typed as `Literal`
+  unions matching the real Postgres enums exactly, not invented);
+  abstract interfaces `DataProvider` (34 methods), `LLMService`,
+  `EmbeddingService`, `VectorStore`; env-driven `AISettings`
+  (`ai/config.py`) defaulting entirely to mock. 24 tests.
+- **Phase AI-2 (done):** `MockDataProvider` - a complete, deterministic
+  implementation of every `DataProvider` method, backed by a
+  hand-written dataset (`ai/services/data/mock_dataset.py`) consistent
+  with the real database's naming (Cairo Medical Center, DEV-001
+  Philips Ventilator, etc.). `get_data_provider()` factory
+  (`ai/services/data/factory.py`) is the single switch point for
+  mock → real backend later. 42 tests (40 provider + 2 factory),
+  verified against known values, not just "doesn't crash."
+- **Phase AI-3 (next):** device/maintenance/ticket/risk/qa/inventory
+  tools - thin, typed wrappers around `DataProvider` that agents call.
+- **Phase AI-4:** deterministic analytics tools.
+- **Phase AI-5:** general medical-device knowledge base.
+- **Phase AI-6:** RAG pipeline (ingestion → chunking → embeddings →
+  vector store → retrieval).
+- **Phase AI-7:** LLM service implementation(s).
+- **Phase AI-8 – AI-12:** Chatbot, Knowledge, Analytics, Report, and
+  Orchestrator agents.
+- **Phase AI-13:** evaluation framework.
+- **Phase AI-14:** CLI.
+- **Phase AI-15:** final integration test.
+
+**66 tests passing** (24 + 42) against the mock implementation, no
+external services required.
