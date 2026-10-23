@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     # Required: no default on purpose, the app must not start pointed at a guess.
     database_url: SecretStr
 
+    # Required, no default: a default signing key would be a published secret.
+    jwt_secret_key: SecretStr
+    jwt_algorithm: Literal["HS256", "HS384", "HS512"] = "HS256"
+    access_token_expire_minutes: int = Field(default=60, ge=1, le=1440)
+
     db_pool_size: int = Field(default=5, ge=1)
     db_max_overflow: int = Field(default=10, ge=0)
     db_pool_timeout: int = Field(default=30, ge=1)
@@ -52,6 +57,13 @@ class Settings(BaseSettings):
     def _must_be_postgres(cls, value: SecretStr) -> SecretStr:
         if not value.get_secret_value().startswith("postgresql"):
             raise ValueError("DATABASE_URL must be a PostgreSQL URL (postgresql+psycopg2://...)")
+        return value
+
+    @field_validator("jwt_secret_key")
+    @classmethod
+    def _strong_secret(cls, value: SecretStr) -> SecretStr:
+        if len(value.get_secret_value()) < 32:
+            raise ValueError("JWT_SECRET_KEY must be at least 32 characters (see .env.example)")
         return value
 
     @property

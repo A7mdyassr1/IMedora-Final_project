@@ -30,6 +30,7 @@ class AppError(Exception):
     status_code = 500
     code = "internal_error"
     default_message = "An unexpected error occurred."
+    headers: Optional[dict] = None
 
     def __init__(self, message: Optional[str] = None, *, details: Optional[List[Any]] = None):
         self.message = message or self.default_message
@@ -41,6 +42,19 @@ class BadRequestError(AppError):
     status_code = 400
     code = "bad_request"
     default_message = "Invalid request."
+
+
+class UnauthorizedError(AppError):
+    status_code = 401
+    code = "unauthorized"
+    default_message = "Authentication required."
+    headers = {"WWW-Authenticate": "Bearer"}
+
+
+class ForbiddenError(AppError):
+    status_code = 403
+    code = "forbidden"
+    default_message = "You do not have permission to perform this action."
 
 
 class NotFoundError(AppError):
@@ -69,7 +83,9 @@ _HTTP_CODES = {
 def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
     async def handle_app_error(request: Request, exc: AppError):
-        return JSONResponse(error_body(exc.code, exc.message, exc.details), status_code=exc.status_code)
+        return JSONResponse(
+            error_body(exc.code, exc.message, exc.details), status_code=exc.status_code, headers=exc.headers
+        )
 
     @app.exception_handler(StarletteHTTPException)
     async def handle_http_exception(request: Request, exc: StarletteHTTPException):

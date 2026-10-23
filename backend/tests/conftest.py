@@ -24,6 +24,7 @@ load_dotenv(Path(__file__).resolve().parents[2] / ".env")  # picks up TEST_DATAB
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL or "postgresql+psycopg2://test:test@127.0.0.1:1/imedora_test"
 os.environ["APP_ENV"] = "test"
+os.environ["JWT_SECRET_KEY"] = "test-only-secret-key-not-used-anywhere-else-0123456789"
 os.environ["LOG_JSON"] = "false"
 
 from fastapi.testclient import TestClient  # noqa: E402

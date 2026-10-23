@@ -33,6 +33,13 @@ uvicorn app.main:app --reload                  # reads DATABASE_URL from the rep
 pytest                                         # set TEST_DATABASE_URL to include the PostgreSQL tests
 ```
 
+First admin (and real passwords for the dev-seed users, which only have a placeholder hash):
+
+```bash
+python -m scripts.create_user --email admin@cairomed.example --full-name "Admin" \
+    --role admin --organization-code CAIRO-MED --hospital-code CMC-MAIN
+```
+
 Docs: `/docs`, `/redoc`. Health: `/health`, `/health/db`. Versioned prefix: `/api/v1`.
 
 ## Planned API Domains
@@ -52,4 +59,6 @@ Docs: `/docs`, `/redoc`. Health: `/health`, `/health/db`. Versioned prefix: `/ap
 
 ## Status
 
-**Phase B1 (foundation) done:** app factory, settings, PostgreSQL connection, session dependency, health endpoints, error handling, logging, CORS, `/api/v1` router. No domain APIs yet (auth is Phase B2).
+- **B1 (foundation) done:** app factory, settings, PostgreSQL connection, health endpoints, error handling, logging, CORS, `/api/v1`.
+- **B2 (auth) done:** login (Argon2 + JWT), `/auth/me`, change password, role-based access (`require_roles`), admin user management (`/users`), organization-scoped.
+- Next: B3 (hospitals, departments, devices).
