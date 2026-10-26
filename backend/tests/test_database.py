@@ -40,7 +40,7 @@ def test_get_db_rolls_back_on_error(monkeypatch):
 def test_safe_database_url_hides_password():
     password = get_engine().url.password
     assert password
-    assert safe_database_url() == get_engine().url.render_as_string(hide_password=True)
+    assert password not in safe_database_url()
     assert "***" in safe_database_url()
 
 

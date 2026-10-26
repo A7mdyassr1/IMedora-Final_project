@@ -49,3 +49,12 @@ class Pagination:
 
 def pagination_params(page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100)) -> Pagination:
     return Pagination(page=page, page_size=page_size)
+
+
+# ---- reusable authorization levels -------------------------------------------------
+# Read access: any authenticated user (always organization-scoped).
+# Structure (hospitals/departments/locations): administrators.
+# Catalog and devices: administrators + biomedical engineers.
+CurrentUser = Depends(get_current_user)
+AdminOnly = Depends(require_roles(Role.ADMIN))
+CanManageAssets = Depends(require_roles(Role.ADMIN, Role.BIOMEDICAL_ENGINEER))

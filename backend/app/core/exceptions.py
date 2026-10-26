@@ -16,6 +16,8 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.core.db_errors import describe_integrity_error
+
 logger = logging.getLogger(__name__)
 
 
@@ -107,9 +109,8 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(IntegrityError)
     async def handle_integrity_error(request: Request, exc: IntegrityError):
         logger.warning("Database integrity error: %s", exc.orig)
-        return JSONResponse(
-            error_body("conflict", "The request conflicts with existing data."), status_code=409
-        )
+        status, code, message = describe_integrity_error(exc)
+        return JSONResponse(error_body(code, message), status_code=status)
 
     @app.exception_handler(OperationalError)
     async def handle_operational_error(request: Request, exc: OperationalError):

@@ -15,6 +15,7 @@ your dev data.
 """
 import os
 from pathlib import Path
+from sqlalchemy.engine import make_url
 
 import pytest
 from dotenv import load_dotenv
@@ -22,6 +23,26 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")  # picks up TEST_DATABASE_URL if kept there
 
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
+DEV_DATABASE_URL = os.environ.get("DATABASE_URL")
+
+if TEST_DATABASE_URL:
+    test_db = make_url(TEST_DATABASE_URL)
+
+    if (
+        test_db.get_backend_name() != "postgresql"
+        or test_db.database != "imedora_test"
+    ):
+        raise RuntimeError(
+            "Unsafe test database: expected PostgreSQL database 'imedora_test'."
+        )
+
+    if DEV_DATABASE_URL:
+        dev_db = make_url(DEV_DATABASE_URL)
+
+        if test_db.database == dev_db.database:
+            raise RuntimeError(
+                "Test database must be different from the development database."
+            )
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL or "postgresql+psycopg2://test:test@127.0.0.1:1/imedora_test"
 os.environ["APP_ENV"] = "test"
 os.environ["JWT_SECRET_KEY"] = "test-only-secret-key-not-used-anywhere-else-0123456789"
@@ -48,3 +69,6 @@ def app():
 def client(app):
     with TestClient(app) as c:  # entering the context runs the startup/shutdown lifespan
         yield c
+
+
+from tests.world import world  # noqa: E402,F401  (registers the shared fixture)

@@ -42,6 +42,8 @@ python -m scripts.create_user --email admin@cairomed.example --full-name "Admin"
 
 Docs: `/docs`, `/redoc`. Health: `/health`, `/health/db`. Versioned prefix: `/api/v1`.
 
+Access rules: any logged-in user can read (always limited to their own organization). Hospitals, departments, locations and the organization itself are changed by `admin`. Devices and the device catalog (categories, manufacturers, models) are changed by `admin` or `biomedical_engineer`. Devices are never hard-deleted: `DELETE /devices/{id}` archives (decommissions) them.
+
 ## Planned API Domains
 
 - Authentication
@@ -61,4 +63,5 @@ Docs: `/docs`, `/redoc`. Health: `/health`, `/health/db`. Versioned prefix: `/ap
 
 - **B1 (foundation) done:** app factory, settings, PostgreSQL connection, health endpoints, error handling, logging, CORS, `/api/v1`.
 - **B2 (auth) done:** login (Argon2 + JWT), `/auth/me`, change password, role-based access (`require_roles`), admin user management (`/users`), organization-scoped.
-- Next: B3 (hospitals, departments, devices).
+- **B3 (device management) done:** organization, hospitals, departments, locations, device categories / manufacturers / models, devices (search, filters, sorting, pagination, archive) and QR lookup `GET /devices/qr/{qr_identifier}`. Database constraint errors are translated centrally in `app/core/db_errors.py`.
+- Next: B4 (maintenance: types, schedules, tickets, records, assignments). `GET /devices/{id}/history` is deferred until B4/B6 provide the data it shows.
