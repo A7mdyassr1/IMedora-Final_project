@@ -35,6 +35,7 @@ python -m pytest ai/tests/ -v
 | Run all AI tests | `python -m pytest ai/tests/ -v` |
 | Run just one phase's tests | `python -m pytest ai/tests/test_models.py -v` |
 | Get a working DataProvider in a script/REPL | `from ai.services.data.factory import get_data_provider` |
+| Call a tool by name | `build_registry(get_data_provider()).call("get_device", device_id="dev-001")` |
 
 ## Progress
 
@@ -52,9 +53,18 @@ python -m pytest ai/tests/ -v
   (`ai/services/data/factory.py`) is the single switch point for
   mock → real backend later. 42 tests (40 provider + 2 factory),
   verified against known values, not just "doesn't crash."
-- **Phase AI-3 (next):** device/maintenance/ticket/risk/qa/inventory
-  tools - thin, typed wrappers around `DataProvider` that agents call.
-- **Phase AI-4:** deterministic analytics tools.
+- **Phase AI-3 (done):** 34 tools (device 8, maintenance 6, ticket 6,
+  risk 5, QA 5, inventory 4) in `ai/tools/*/`, one per `DataProvider`
+  method. Every tool is wrapped by `@tool` (`ai/tools/base.py`): it
+  always returns a `ToolResult` and never raises; "not found" is
+  `success=True, found=False` (so an agent says "no such device" instead
+  of inventing one); a real fault is `success=False` with the error.
+  Current risk and risk history are separate tools. Statistics tools
+  echo the filters actually applied. `ai/tools/registry.py` binds all
+  tools to a provider (`build_registry(provider)`) and is the only
+  thing agents will use. Also fixed the mock provider silently ignoring
+  department/date filters in its statistics methods. 55 new tests.
+- **Phase AI-4 (next):** deterministic analytics tools.
 - **Phase AI-5:** general medical-device knowledge base.
 - **Phase AI-6:** RAG pipeline (ingestion → chunking → embeddings →
   vector store → retrieval).
@@ -65,5 +75,5 @@ python -m pytest ai/tests/ -v
 - **Phase AI-14:** CLI.
 - **Phase AI-15:** final integration test.
 
-**66 tests passing** (24 + 42) against the mock implementation, no
-external services required.
+**121 tests passing** against the mock implementation, no external
+services required.

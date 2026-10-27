@@ -275,3 +275,28 @@ def test_results_are_deterministic_across_instances():
     p1, p2 = MockDataProvider(), MockDataProvider()
     assert p1.get_device("dev-001") == p2.get_device("dev-001")
     assert p1.get_maintenance_statistics() == p2.get_maintenance_statistics()
+
+
+# ---------------------------------------------------------------------
+# Filters must actually be applied, never silently ignored
+# ---------------------------------------------------------------------
+def test_maintenance_statistics_honors_department_filter(provider):
+    # ICU devices are DEV-001 (2 records) and DEV-003 (1 record)
+    stats = provider.get_maintenance_statistics(department="ICU")
+    assert stats["total"] == 3
+    assert stats["total"] < provider.get_maintenance_statistics()["total"]
+
+
+def test_maintenance_statistics_unknown_department_is_empty_not_unfiltered(provider):
+    assert provider.get_maintenance_statistics(department="Nonexistent")["total"] == 0
+
+
+def test_ticket_statistics_honors_department_filter(provider):
+    # Radiology (h1) only has DEV-002 -> tkt-004
+    stats = provider.get_ticket_statistics(department="Radiology")
+    assert stats["total"] == 1
+
+
+def test_ticket_statistics_honors_date_filter(provider):
+    stats = provider.get_ticket_statistics(date_from=date(2026, 9, 1))
+    assert stats["total"] == 3  # tkt-002, tkt-003, tkt-004 created on/after Sep 1

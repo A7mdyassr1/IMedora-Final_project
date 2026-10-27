@@ -42,6 +42,10 @@ class MockDataProvider(DataProvider):
         d = data.DEPARTMENTS.get(department_id) if department_id else None
         return d["name"] if d else None
 
+    def _device_ids_in_department(self, department: str) -> set:
+        dept_ids = {did for did, d in data.DEPARTMENTS.items() if d["name"].lower() == department.lower()}
+        return {d["device_id"] for d in data.DEVICES.values() if d.get("department_id") in dept_ids}
+
     def _current_risk_level(self, device_id: str) -> Optional[str]:
         history = [a for a in data.RISK_ASSESSMENTS if a["device_id"] == device_id]
         if not history:
@@ -199,6 +203,8 @@ class MockDataProvider(DataProvider):
         if hospital_id:
             device_ids = {d["device_id"] for d in data.DEVICES.values() if d["hospital_id"] == hospital_id}
             records = [r for r in records if r["device_id"] in device_ids]
+        if department:
+            records = [r for r in records if r["device_id"] in self._device_ids_in_department(department)]
         if date_from:
             records = [r for r in records if _parse_dt(r["performed_at"]).date() >= date_from]
         if date_to:
@@ -254,6 +260,13 @@ class MockDataProvider(DataProvider):
             tickets = [t for t in tickets if t["priority"] == priority]
         if status:
             tickets = [t for t in tickets if t["status"] == status]
+        if department:
+            dept_devices = self._device_ids_in_department(department)
+            tickets = [t for t in tickets if t["device_id"] in dept_devices]
+        if date_from:
+            tickets = [t for t in tickets if _parse_dt(t["created_at"]).date() >= date_from]
+        if date_to:
+            tickets = [t for t in tickets if _parse_dt(t["created_at"]).date() <= date_to]
         by_status: dict = {}
         for t in tickets:
             by_status[t["status"]] = by_status.get(t["status"], 0) + 1
