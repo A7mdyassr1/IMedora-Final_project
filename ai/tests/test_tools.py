@@ -19,15 +19,20 @@ def registry():
 # ---------------------------------------------------------------------
 # Registry integrity
 # ---------------------------------------------------------------------
+def _provider_tool_names(registry):
+    return {n for n in registry.names() if registry.get(n).category != "analytics"}
+
+
 def test_registry_exposes_one_tool_per_provider_method(registry):
-    assert len(registry.names()) == 34
-    assert len(ALL_TOOLS) == 34
+    assert len(_provider_tool_names(registry)) == 34
+    assert len(registry.by_category("analytics")) == 8  # Phase AI-4
+    assert len(ALL_TOOLS) == 34 + 8
 
 
 def test_every_tool_has_a_description_and_category(registry):
     for spec in registry.describe():
         assert spec["description"], f"{spec['name']} has no description"
-        assert spec["category"] in {"device", "maintenance", "ticket", "risk", "qa", "inventory"}
+        assert spec["category"] in {"device", "maintenance", "ticket", "risk", "qa", "inventory", "analytics"}
 
 
 def test_expected_tool_names_from_the_project_brief_all_exist(registry):
@@ -78,7 +83,7 @@ SAMPLE_CALLS = [
 
 
 def test_sample_calls_cover_every_tool(registry):
-    assert {name for name, _ in SAMPLE_CALLS} == set(registry.names())
+    assert {name for name, _ in SAMPLE_CALLS} == _provider_tool_names(registry)
 
 
 @pytest.mark.parametrize("name,kwargs", SAMPLE_CALLS)

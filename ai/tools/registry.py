@@ -15,6 +15,7 @@ from typing import Any, Callable, Dict, List
 
 from ai.models.agent import ToolResult
 from ai.services.data.base import DataProvider
+from ai.tools.analytics_tools.analytics_tools import TOOLS as ANALYTICS_TOOLS
 from ai.tools.device_tools.device_tools import TOOLS as DEVICE_TOOLS
 from ai.tools.inventory_tools.inventory_tools import TOOLS as INVENTORY_TOOLS
 from ai.tools.maintenance_tools.maintenance_tools import TOOLS as MAINTENANCE_TOOLS
@@ -22,7 +23,7 @@ from ai.tools.qa_tools.qa_tools import TOOLS as QA_TOOLS
 from ai.tools.risk_tools.risk_tools import TOOLS as RISK_TOOLS
 from ai.tools.ticket_tools.ticket_tools import TOOLS as TICKET_TOOLS
 
-ALL_TOOLS = [*DEVICE_TOOLS, *MAINTENANCE_TOOLS, *TICKET_TOOLS, *RISK_TOOLS, *QA_TOOLS, *INVENTORY_TOOLS]
+ALL_TOOLS = [*DEVICE_TOOLS, *MAINTENANCE_TOOLS, *TICKET_TOOLS, *RISK_TOOLS, *QA_TOOLS, *INVENTORY_TOOLS, *ANALYTICS_TOOLS]
 
 
 @dataclass(frozen=True)
