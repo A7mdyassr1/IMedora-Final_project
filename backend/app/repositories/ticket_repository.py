@@ -13,13 +13,14 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, Iterable, List, Optional, Tuple
 
-from sqlalchemy import or_, select
+from sqlalchemy import exists, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.access import AccessScope, TicketAccess
 from app.core.enums import TicketPriority, TicketStatus
 from app.models.audit_log import AuditLog
 from app.models.device import Device
+from app.models.maintenance import MaintenanceRecord
 from app.models.ticket import MaintenanceTicket, TicketAssignment
 from app.models.user import User
 from app.repositories.pagination import paginate
@@ -75,6 +76,25 @@ class TicketRepository:
             stmt = stmt.where(MaintenanceTicket.deleted_at.is_(None))
         return self.db.scalars(stmt.execution_options(populate_existing=True)).unique().first()
 
+    def get_for_update(self, scope: AccessScope, ticket_id: uuid.UUID, include_deleted: bool = False) -> Optional[MaintenanceTicket]:
+        """Same visibility as `get`, and LOCKS the ticket row (SELECT ... FOR UPDATE) until the
+        transaction ends: concurrent changes to one ticket (two people taking it, two status
+        changes) run one after the other, and the second sees the first one's result."""
+        stmt = (select(MaintenanceTicket).where(MaintenanceTicket.id == ticket_id, *scope_conditions(scope))
+                .with_for_update(of=MaintenanceTicket))
+        if not include_deleted:
+            stmt = stmt.where(MaintenanceTicket.deleted_at.is_(None))
+        return self.db.scalars(stmt.execution_options(populate_existing=True)).unique().first()
+
+    def add_assignment(self, assignment: TicketAssignment) -> TicketAssignment:
+        self.db.add(assignment)
+        self.db.flush()
+        return assignment
+
+    def has_maintenance_record(self, ticket: MaintenanceTicket) -> bool:
+        return bool(self.db.scalar(select(exists().where(MaintenanceRecord.ticket_id == ticket.id,
+                                                         MaintenanceRecord.device_id == ticket.device_id))))
+
     def list(self, scope: AccessScope, f: TicketFilters, sort: str, descending: bool, page: int,
              page_size: int) -> Tuple[List[MaintenanceTicket], int]:
         # Scope first; filters can only narrow it (a hospital outside the scope yields an empty page).
@@ -120,6 +140,17 @@ class TicketRepository:
         """The ticket's audit rows, oldest first (index ix_audit_logs_table_record)."""
         return list(self.db.scalars(
             select(AuditLog).where(AuditLog.table_name == TICKET_TABLE, AuditLog.record_id == ticket.id,
+                                   AuditLog.organization_id == ticket.organization_id)
+            .order_by(AuditLog.created_at, AuditLog.id)
+        ))
+
+    def assignment_audit_rows(self, ticket: MaintenanceTicket) -> List[AuditLog]:
+        """Audit rows of the ticket's assignments (who assigned / unassigned), oldest first."""
+        ids = [a.id for a in ticket.assignments]
+        if not ids:
+            return []
+        return list(self.db.scalars(
+            select(AuditLog).where(AuditLog.table_name == TicketAssignment.__tablename__, AuditLog.record_id.in_(ids),
                                    AuditLog.organization_id == ticket.organization_id)
             .order_by(AuditLog.created_at, AuditLog.id)
         ))

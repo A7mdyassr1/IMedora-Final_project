@@ -146,7 +146,40 @@ cd backend && TEST_SEED_DATABASE_URL=postgresql+psycopg2://<user>:<pw>@localhost
 - `device` holds identifying fields only.
 - For department users, staff appear as a role (`"name": "Technician"`, `"id": null`).
 
-**Timeline:** it is derived from the ticket's audit rows (created, status, priority, deletion) and is never stored. Assignment events arrive in B4 CP2, and work performed in CP3.
+**Timeline:** it is derived from the ticket's audit rows (created, status, priority, deletion) and from `ticket_assignments` (assigned, unassigned), and is never stored. The automatic status change caused by an assignment is folded into that one entry. Work performed arrives in CP3.
+
+### Ticket workflow (B4 CP2)
+
+| Endpoint | Who |
+|---|---|
+| `PATCH /api/v1/tickets/{id}/status` `{status}` | see the rules below |
+| `POST /api/v1/tickets/{id}/assignments` `{user_id}` | engineers (own hospital) and admins; technicians only themselves, and only on `open` or `assigned` tickets |
+| `DELETE /api/v1/tickets/{id}/assignments/{user_id}` | engineers and admins; technicians only themselves |
+| `PATCH /api/v1/tickets/{id}` `{priority}` | engineers (own hospital) and admins; not on closed or cancelled tickets |
+| `DELETE /api/v1/tickets/{id}` | admins: soft delete, idempotent `204`. The ticket stays readable for admins and becomes read-only |
+
+**Transitions** (`app/core/ticket_workflow.py`):
+
+| From | To | Who |
+|---|---|---|
+| `open` | `cancelled` | engineer, admin, or the reporter while open and unassigned |
+| `assigned` | `in_progress`, `cancelled` | assignee, engineer, admin (cancel: engineer, admin) |
+| `in_progress` | `waiting_for_parts`, `resolved`, `cancelled` | assignee, engineer, admin (cancel: engineer, admin) |
+| `waiting_for_parts` | `in_progress`, `resolved`, `cancelled` | assignee, engineer, admin (cancel: engineer, admin) |
+| `resolved` | `closed`, `in_progress` (reopen) | engineer, admin |
+| `closed`, `cancelled` | — | terminal |
+
+- **Automatic status changes:** the first assignment moves `open` → `assigned`, and removing the last assignee moves `assigned` → `open`. A ticket in progress must keep at least one assignee.
+- **Resolving** needs a maintenance record linked to the ticket (409 `maintenance_record_required`). Reopening needs an active assignee.
+- **Assignees** must be active technicians or biomedical engineers of the ticket's hospital. Assignments stay active after resolution, as history; finished tickets and tickets of inactive hospitals take no new assignments.
+- **Device status** is never changed by the ticket workflow.
+- **Locking:** every change locks the ticket row, so concurrent changes run one after the other.
+- **Audit:** every change is audited in the same transaction.
+- **Errors:**
+  - not visible → 404;
+  - visible but not allowed → 403;
+  - transition not in the table → 409 `invalid_status_transition`, with `details: [{from, to, allowed}]`;
+  - deleted ticket → 409.
 
 ## Planned API Domains
 
@@ -188,5 +221,6 @@ cd backend && TEST_SEED_DATABASE_URL=postgresql+psycopg2://<user>:<pw>@localhost
     - Report a problem, including on another department's device scanned by QR.
     - Ticket lists, "my tickets", ticket detail with a derived timeline, and a device's ticket history.
     - Visibility rules in `app/core/access.py`.
-  - Next: CP2 workflow and assignments, CP3 maintenance records and schedules, CP4 integration.
+  - **Checkpoint 2 (workflow):** status transitions, assignments, priority, admin soft delete, row locking, timeline v2.
+  - Next: CP3 maintenance records and schedules, CP4 integration.
   - `GET /devices/{id}/history` is deferred until B4/B6 provide the data it shows.

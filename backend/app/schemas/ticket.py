@@ -61,6 +61,24 @@ class TicketCreate(BaseModel):
     priority: Optional[TicketPriority] = Field(default=None, description="Defaults to medium.")
 
 
+class TicketStatusUpdate(BaseModel):
+    """PATCH /tickets/{id}/status. `open` and `assigned` follow the assignments and cannot be set."""
+    model_config = ConfigDict(extra="forbid")
+    status: TicketStatus
+
+
+class TicketUpdate(BaseModel):
+    """PATCH /tickets/{id} - engineers and admins. The description, device and reporter of a
+    ticket are history and cannot be edited."""
+    model_config = ConfigDict(extra="forbid")
+    priority: TicketPriority
+
+
+class AssignmentCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    user_id: uuid.UUID
+
+
 # ---- responses --------------------------------------------------------------------------------
 
 class TicketDevice(BaseModel):

@@ -20,8 +20,12 @@ CONSTRAINT_MESSAGES = {
     "manufacturers_name_key": "A manufacturer with this name already exists.",
     "uq_device_model_manufacturer_name": "This manufacturer already has a model with this name.",
     "users_email_key": "A user with this email already exists.",
+    "uq_active_assignment": "This user is already assigned to this ticket.",
     # check
     "ck_device_warranty_after_installation": "Warranty expiry cannot be before the installation date.",
+    "ck_ticket_resolved_status_has_timestamp": "A resolved or closed ticket must have a resolution time.",
+    "ck_ticket_resolved_after_created": "A ticket cannot be resolved before it was created.",
+    "ck_assignment_unassigned_after_assigned": "An assignment cannot end before it started.",
     # restrict foreign keys (delete blocked because something still points at the row)
     "devices_department_id_fkey": "This department still has devices assigned to it.",
     "devices_device_model_id_fkey": "This model is still used by devices.",

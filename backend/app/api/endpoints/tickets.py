@@ -1,4 +1,5 @@
-"""Maintenance tickets (B4 CP1): report a problem and read tickets.
+"""Maintenance tickets (B4): report a problem and read tickets (CP1); workflow - status,
+assignments, priority, soft delete (CP2).
 
 Visibility (AccessScope.ticket_access): admins the whole organization; engineers and technicians
 their hospital plus their own reports; department users only their own reports. Tickets outside
@@ -8,17 +9,19 @@ import uuid
 from datetime import datetime, timezone
 from typing import List, Literal, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.orm import Session
 
-from app.api.deps import CurrentUser, Pagination, pagination_params
+from app.api.deps import AdminOnly, CurrentUser, Pagination, pagination_params
 from app.core.access import scope_for
 from app.core.database import get_db
 from app.core.enums import TicketPriority, TicketStatus
 from app.models.user import User
 from app.repositories.ticket_repository import TicketFilters
 from app.schemas.common import Page
-from app.schemas.ticket import TicketCreate, TicketDetailResponse, TicketResponse
+from app.schemas.ticket import (
+    AssignmentCreate, TicketCreate, TicketDetailResponse, TicketResponse, TicketStatusUpdate, TicketUpdate,
+)
 from app.services.ticket_service import TicketService
 
 router = APIRouter(tags=["tickets"])
@@ -131,3 +134,70 @@ def device_tickets(
     items, total = TicketService(db).for_device(scope, device_id, TicketFilters(status=list(status or [])),
                                                 sort, order == "desc", p.page, p.page_size)
     return _page(items, total, p, scope)
+
+
+# ---- workflow (CP2) ----------------------------------------------------------------------------
+def _detail(service: TicketService, ticket, scope) -> TicketDetailResponse:
+    return TicketDetailResponse.build_detail(ticket, scope, service.timeline(scope, ticket))
+
+
+@router.patch(
+    "/tickets/{ticket_id}/status", response_model=TicketDetailResponse, summary="Change a ticket's status",
+    description=(
+        "Allowed changes: open -> cancelled; assigned -> in_progress | cancelled; in_progress -> "
+        "waiting_for_parts | resolved | cancelled; waiting_for_parts -> in_progress | resolved | cancelled; "
+        "resolved -> closed | in_progress (reopen). `open` and `assigned` follow the assignments. "
+        "Work statuses: an active assignee, an engineer of the hospital or an admin. Close and reopen: "
+        "engineers and admins. Cancel: engineers and admins, or the reporter while the ticket is open "
+        "and unassigned. Resolving needs a linked maintenance record (409 `maintenance_record_required`). "
+        "Not in the table: 409 `invalid_status_transition`."
+    ),
+)
+def change_status(ticket_id: uuid.UUID, body: TicketStatusUpdate, user: User = CurrentUser, db: Session = Depends(get_db)):
+    scope = scope_for(user)
+    service = TicketService(db)
+    return _detail(service, service.change_status(scope, ticket_id, body.status), scope)
+
+
+@router.post(
+    "/tickets/{ticket_id}/assignments", response_model=TicketDetailResponse, status_code=201,
+    summary="Assign a technician or engineer",
+    description=(
+        "Engineers (own hospital) and admins assign any active technician or biomedical engineer of "
+        "the ticket's hospital; technicians can only take an open or assigned ticket themselves. The "
+        "first assignment moves an open ticket to `assigned`."
+    ),
+)
+def assign(ticket_id: uuid.UUID, body: AssignmentCreate, user: User = CurrentUser, db: Session = Depends(get_db)):
+    scope = scope_for(user)
+    service = TicketService(db)
+    return _detail(service, service.assign(scope, ticket_id, body.user_id), scope)
+
+
+@router.delete(
+    "/tickets/{ticket_id}/assignments/{user_id}", response_model=TicketDetailResponse, summary="Unassign",
+    description=(
+        "Ends an active assignment (the row is kept as history). Removing the last assignee moves an "
+        "`assigned` ticket back to `open`; a ticket in progress must keep at least one assignee."
+    ),
+)
+def unassign(ticket_id: uuid.UUID, user_id: uuid.UUID, user: User = CurrentUser, db: Session = Depends(get_db)):
+    scope = scope_for(user)
+    service = TicketService(db)
+    return _detail(service, service.unassign(scope, ticket_id, user_id), scope)
+
+
+@router.patch("/tickets/{ticket_id}", response_model=TicketDetailResponse, summary="Change a ticket's priority")
+def update_ticket(ticket_id: uuid.UUID, body: TicketUpdate, user: User = CurrentUser, db: Session = Depends(get_db)):
+    scope = scope_for(user)
+    service = TicketService(db)
+    return _detail(service, service.change_priority(scope, ticket_id, body.priority), scope)
+
+
+@router.delete(
+    "/tickets/{ticket_id}", status_code=204, summary="Delete a ticket (administrators; soft delete)",
+    description="For mistaken or duplicate tickets. The ticket stays readable for administrators. Idempotent.",
+)
+def delete_ticket(ticket_id: uuid.UUID, user: User = AdminOnly, db: Session = Depends(get_db)):
+    TicketService(db).soft_delete(scope_for(user), ticket_id)
+    return Response(status_code=204)

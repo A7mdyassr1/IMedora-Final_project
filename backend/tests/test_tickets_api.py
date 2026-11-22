@@ -274,15 +274,19 @@ def test_assignees_and_timeline_show_names_to_staff_and_roles_to_department_user
     staff = client.get(f"{API}/tickets/{tid}", headers=h["eng_h1"]).json()
     assert [(a["id"], a["role"]) for a in staff["assignees"]] == [(w["tech_id"], "technician")]
     assert staff["assignees"][0]["name"] == w["tech"].split("@")[0]
+    # B4 CP2 (timeline v2): the assignment row inserted above now appears as an "assigned" event
     assert [(i["kind"], i["status"]) for i in staff["timeline"]] == [
-        ("created", "open"), ("priority_changed", "open"), ("status_changed", "in_progress")]
-    assert staff["timeline"][1]["message"] == "Priority changed from Medium to High."
-    assert staff["timeline"][2]["actor"] == w["tech"].split("@")[0]
+        ("created", "open"), ("assigned", "open"), ("priority_changed", "open"), ("status_changed", "in_progress")]
+    assert staff["timeline"][1]["message"] == "Assigned to " + w["tech"].split("@")[0] + "."
+    assert staff["timeline"][2]["message"] == "Priority changed from Medium to High."
+    assert staff["timeline"][3]["actor"] == w["tech"].split("@")[0]
 
     own = client.get(f"{API}/tickets/{tid}", headers=h["dept_icu"]).json()
     assert own["assignees"] == [{"id": None, "name": "Technician", "role": "technician",
                                  "assigned_at": own["assignees"][0]["assigned_at"]}]
-    assert [i["actor"] for i in own["timeline"]] == [own["reported_by"]["name"], "Biomedical engineer", "Technician"]
+    # B4 CP2: the directly-inserted assignment has no audit row, so no actor; its assignee is a role
+    assert [i["actor"] for i in own["timeline"]] == [own["reported_by"]["name"], None, "Biomedical engineer", "Technician"]
+    assert own["timeline"][1]["message"] == "Assigned to Technician."
     assert w["tech"].split("@")[0] not in client.get(f"{API}/tickets/mine", headers=h["dept_icu"]).text
 
 
@@ -317,5 +321,6 @@ def test_mobile_flow_scan_report_and_follow(client, tickets):
 def test_openapi_documents_the_ticket_endpoints(client):
     paths = client.get("/openapi.json").json()["paths"]
     assert set(paths[f"{API}/tickets"]) == {"get", "post"}
-    for p in (f"{API}/tickets/mine", f"{API}/tickets/{{ticket_id}}", f"{API}/devices/{{device_id}}/tickets"):
+    for p in (f"{API}/tickets/mine", f"{API}/devices/{{device_id}}/tickets"):
         assert set(paths[p]) == {"get"}, p
+    assert set(paths[f"{API}/tickets/{{ticket_id}}"]) == {"get", "patch", "delete"}  # B4 CP2 added patch, delete

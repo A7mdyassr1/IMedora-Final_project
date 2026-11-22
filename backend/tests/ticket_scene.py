@@ -3,7 +3,8 @@
 `tickets` depends on `scene`, so pytest tears it down BEFORE `scene`'s fixtures (`cat` removes
 devices, `world` removes users and audit rows). It deletes, bottom-up and only for the test's two
 organizations, every maintenance row the test created: records and schedules (RESTRICT devices
-and tickets), then tickets (their assignments cascade). The existing fixtures are unchanged.
+and tickets), then tickets (their assignments cascade), then the test's own maintenance type
+(global table, unique per-test name). The existing fixtures are unchanged.
 """
 import uuid
 
@@ -41,10 +42,23 @@ def tickets(scene, client):
             db.commit()
             return rows
 
-    yield dict(scene, report=report, add_user=add_user, sql=sql)
+    type_name = f"test-corrective-{world['sfx']}"
+
+    def record(ticket_id, description="Replaced the power supply"):
+        """B4 CP2: a maintenance record linked to the ticket, inserted directly (the records API
+        arrives in CP3). Uses a per-test maintenance type, removed again at teardown."""
+        type_id = (sql("SELECT id::text FROM maintenance_types WHERE name = :n", n=type_name) or
+                   sql("INSERT INTO maintenance_types (name) VALUES (:n) RETURNING id::text", n=type_name))[0][0]
+        return sql("INSERT INTO maintenance_records (organization_id, hospital_id, device_id, maintenance_type_id, ticket_id, "
+                   "performed_by, description) SELECT organization_id, hospital_id, device_id, :mt, id, :u, :d "
+                   "FROM maintenance_tickets WHERE id = :t RETURNING id::text",
+                   mt=type_id, u=world["tech_id"], d=description, t=ticket_id)[0][0]
+
+    yield dict(scene, report=report, add_user=add_user, sql=sql, record=record)
 
     with get_session_factory()() as db:
         orgs = [uuid.UUID(world["org"]), uuid.UUID(world["other"])]
         for table in ("maintenance_records", "maintenance_schedules", "maintenance_tickets"):
             db.execute(text(f"DELETE FROM {table} WHERE organization_id = ANY(:o)"), {"o": orgs})
+        db.execute(text("DELETE FROM maintenance_types WHERE name = :n"), {"n": type_name})
         db.commit()

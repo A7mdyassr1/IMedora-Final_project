@@ -2,20 +2,27 @@
 
 There is no ticket-updates table (schema frozen). The history shown by GET /tickets/{id} is built
 from the audit rows the backend writes for every ticket change (audit_logs, table_name =
-'maintenance_tickets', record_id = ticket id) - and, from later B4 checkpoints, from
-ticket_assignments (CP2) and linked maintenance records (CP3).
+'maintenance_tickets', record_id = ticket id), from ticket_assignments (B4 CP2: who was assigned
+when, and - through the assignments' own audit rows - by whom), and, from CP3, from linked
+maintenance records.
 
 This module is PURE: no database access. The service loads the rows and the people involved and
 passes them in, so every rule here is unit-tested without PostgreSQL.
 
-Rules (B4 CP1):
+Rules:
 - "created": the ticket's INSERT audit row. Tickets created outside the backend (seeds, legacy
   data) have no such row: the event is then taken from tickets.created_at, with the reporter as
   actor and status "open" (the only status a ticket is created with).
 - "status_changed" / "priority_changed" / "deleted": UPDATE audit rows whose new values change
   that column. Other columns are not timeline events.
+- "assigned" / "unassigned" (CP2): from ticket_assignments.assigned_at / unassigned_at. The actor
+  is taken from the assignment's audit row when there is one (seeded assignments have none).
+- The automatic status change that an (un)assignment causes in the same transaction
+  (open -> assigned, assigned -> open) is FOLDED into that assignment event: one entry
+  "Assigned to Technician." with status "assigned", not two entries.
 - Every item carries the ticket status AFTER that event (the mobile app colours items by it).
-- Items are ordered by time; events of one audit row keep the order above.
+- Items are ordered by time; at the same instant: created, then (un)assignments, then ticket
+  changes; events of one audit row keep the order above.
 - Actors: staff see names. Department users see other people as a role description
   ("Technician", ...), never a name (approved decision Q9); their own actions show their name.
 """
@@ -48,7 +55,7 @@ ROLE_LABELS = {
     "department_user": "Department staff",
 }
 
-TimelineKind = Literal["created", "status_changed", "priority_changed", "deleted"]
+TimelineKind = Literal["created", "assigned", "unassigned", "status_changed", "priority_changed", "deleted"]
 
 
 @dataclass(frozen=True)
@@ -58,6 +65,15 @@ class AuditEntry:
     user_id: Optional[uuid.UUID]
     old_values: Optional[Dict[str, Any]]
     new_values: Optional[Dict[str, Any]]
+
+
+@dataclass(frozen=True)
+class AssignmentEntry:
+    user_id: uuid.UUID
+    assigned_at: datetime
+    unassigned_at: Optional[datetime] = None
+    assigned_by: Optional[uuid.UUID] = None     # from the assignment's INSERT audit row
+    unassigned_by: Optional[uuid.UUID] = None   # from its UPDATE (unassigned_at) audit row
 
 
 @dataclass(frozen=True)
@@ -111,6 +127,9 @@ def _priority_label(value: Any) -> str:
         return str(value)
 
 
+_FOLDED = {"assigned": TicketStatus.ASSIGNED, "unassigned": TicketStatus.OPEN}
+
+
 def build_timeline(
     *,
     ticket_created_at: datetime,
@@ -119,35 +138,62 @@ def build_timeline(
     people: Dict[uuid.UUID, Person],
     viewer_id: uuid.UUID,
     viewer_sees_names: bool,
+    assignments: Iterable[AssignmentEntry] = (),
 ) -> List[TimelineItem]:
-    rows = sorted(audit, key=lambda e: e.at)  # stable: rows with equal times keep the given order
-
     def actor(user_id: Optional[uuid.UUID]) -> Optional[str]:
         return person_display(people.get(user_id) if user_id else None, viewer_id, viewer_sees_names)
 
-    items: List[TimelineItem] = []
+    def named(user_id: uuid.UUID) -> str:
+        return actor(user_id) or "a staff member"
+
+    rows = sorted(audit, key=lambda e: e.at)  # stable: rows with equal times keep the given order
     insert = next((e for e in rows if e.action == "insert"), None)
     if insert is not None:
-        status = _status((insert.new_values or {}).get("status"), TicketStatus.OPEN)
-        items.append(TimelineItem(insert.at, "created", status, "Ticket created.", actor(insert.user_id)))
+        created_status = _status((insert.new_values or {}).get("status"), TicketStatus.OPEN)
+        created = (insert.at, "created", insert.user_id)
     else:  # created outside the backend (seed / legacy data): no INSERT audit row
-        status = TicketStatus.OPEN
-        items.append(TimelineItem(ticket_created_at, "created", status, "Ticket created.", actor(reporter_id)))
+        created_status = TicketStatus.OPEN
+        created = (ticket_created_at, "created", reporter_id)
 
+    # (at, order at the same instant, kind, data)
+    events: list = [(created[0], 0, "created", created)]
+    for a in assignments:
+        events.append((a.assigned_at, 1, "assigned", a))
+        if a.unassigned_at is not None:
+            events.append((a.unassigned_at, 1, "unassigned", a))
     for e in rows:
-        if e.action != "update":
-            continue
-        new, old = e.new_values or {}, e.old_values or {}
-        who = actor(e.user_id)
-        if "status" in new:
-            status = _status(new["status"], status)
-            items.append(TimelineItem(e.at, "status_changed", status, f"Status changed to {_status_label(new['status'])}.", who))
-        if "priority" in new:
-            if old.get("priority") is not None:
-                message = f"Priority changed from {_priority_label(old['priority'])} to {_priority_label(new['priority'])}."
-            else:
-                message = f"Priority changed to {_priority_label(new['priority'])}."
-            items.append(TimelineItem(e.at, "priority_changed", status, message, who))
-        if new.get("deleted_at"):
-            items.append(TimelineItem(e.at, "deleted", status, "Ticket deleted.", who))
+        if e.action == "update":
+            events.append((e.at, 2, "update", e))
+    events.sort(key=lambda ev: (ev[0], ev[1]))  # stable
+
+    items: List[TimelineItem] = []
+    status = created_status
+    for at, _, kind, data in events:
+        if kind == "created":
+            items.append(TimelineItem(at, "created", status, "Ticket created.", actor(data[2])))
+        elif kind == "assigned":
+            items.append(TimelineItem(at, "assigned", status, f"Assigned to {named(data.user_id)}.", actor(data.assigned_by)))
+        elif kind == "unassigned":
+            items.append(TimelineItem(at, "unassigned", status, f"{named(data.user_id)} unassigned.", actor(data.unassigned_by)))
+        else:
+            new, old, who = data.new_values or {}, data.old_values or {}, actor(data.user_id)
+            if "status" in new:
+                new_status = _status(new["status"], status)
+                last = items[-1] if items else None
+                if (last is not None and last.at == at and last.kind in _FOLDED
+                        and _FOLDED[last.kind] is new_status):
+                    # automatic open <-> assigned caused by that (un)assignment: one entry, not two
+                    status = new_status
+                    items[-1] = TimelineItem(last.at, last.kind, status, last.message, last.actor)
+                else:
+                    status = new_status
+                    items.append(TimelineItem(at, "status_changed", status, f"Status changed to {_status_label(new['status'])}.", who))
+            if "priority" in new:
+                if old.get("priority") is not None:
+                    message = f"Priority changed from {_priority_label(old['priority'])} to {_priority_label(new['priority'])}."
+                else:
+                    message = f"Priority changed to {_priority_label(new['priority'])}."
+                items.append(TimelineItem(at, "priority_changed", status, message, who))
+            if new.get("deleted_at"):
+                items.append(TimelineItem(at, "deleted", status, "Ticket deleted.", who))
     return items
