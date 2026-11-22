@@ -34,7 +34,8 @@ class Settings(BaseSettings):
     # Required, no default: a default signing key would be a published secret.
     jwt_secret_key: SecretStr
     jwt_algorithm: Literal["HS256", "HS384", "HS512"] = "HS256"
-    access_token_expire_minutes: int = Field(default=60, ge=1, le=1440)
+    # Default = one 8-hour hospital shift (Decision 2). Configurable via ACCESS_TOKEN_EXPIRE_MINUTES.
+    access_token_expire_minutes: int = Field(default=480, ge=1, le=1440)
 
     db_pool_size: int = Field(default=5, ge=1)
     db_max_overflow: int = Field(default=10, ge=0)

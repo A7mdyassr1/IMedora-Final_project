@@ -1,16 +1,24 @@
-# IMedora Backend - Python dependencies
-# Version ranges follow the same style as ai/requirements.txt and database/requirements.txt.
-# psycopg2-binary matches the driver the database/ layer already uses (see .env.example).
-fastapi>=0.115,<1.0
-uvicorn[standard]>=0.30,<1.0
-SQLAlchemy>=2.0,<3.0
-psycopg2-binary>=2.9,<3.0
-pydantic>=2.5,<3.0
-pydantic-settings>=2.1,<3.0
-python-dotenv>=1.0,<2.0
-argon2-cffi>=23.1,<26.0   # password hashing
-PyJWT>=2.8,<3.0           # access tokens
+# IMedora Backend - Python dependencies (exact pins)
+#
+# These exact versions were installed and the full backend suite was run against them,
+# including the PostgreSQL integration tests, on Python 3.11, 3.12 and 3.13 (B3.1, 2026-11-14).
+# Windows (win_amd64) wheels exist for every pin on those Python versions.
+#
+# Python 3.11 or newer is required (the code uses enum.StrEnum).
+# To upgrade: change one pin, run the full suite with TEST_DATABASE_URL set, then commit.
+# psycopg2-binary matches the driver the database/ layer already uses.
+
+fastapi==0.162.7
+starlette==1.10.0         # pulled in by fastapi; pinned so the tested pair stays together
+uvicorn[standard]==0.54.0
+SQLAlchemy==2.1.8
+psycopg2-binary==2.9.13
+pydantic==2.14.3
+pydantic-settings==2.16.3
+python-dotenv==1.2.4
+argon2-cffi==25.1.0       # password hashing (Argon2id)
+PyJWT==2.15.1             # access tokens
 
 # testing
-pytest>=8.0,<9.0
-httpx>=0.27,<1.0
+pytest==8.4.2
+httpx==0.28.1             # used by FastAPI's TestClient

@@ -39,7 +39,7 @@ def _simple_page(rows, total, p: Pagination, schema) -> Page:
 # ---- categories ------------------------------------------------------------------------
 @category_router.post("", response_model=CategoryResponse, status_code=201, summary="Create a category")
 def create_category(body: CategoryCreate, user: User = CanManageAssets, db: Session = Depends(get_db)):
-    o = CatalogService(db).create_simple(DeviceCategory, body.name)
+    o = CatalogService(db).create_simple(DeviceCategory, body.name, actor=user)
     return CategoryResponse(id=o.id, name=o.name)
 
 
@@ -57,20 +57,20 @@ def get_category(category_id: uuid.UUID, user: User = CurrentUser, db: Session =
 
 @category_router.patch("/{category_id}", response_model=CategoryResponse, summary="Rename a category")
 def rename_category(category_id: uuid.UUID, body: CategoryUpdate, user: User = CanManageAssets, db: Session = Depends(get_db)):
-    o = CatalogService(db).rename(DeviceCategory, category_id, body.name, "Category")
+    o = CatalogService(db).rename(DeviceCategory, category_id, body.name, "Category", actor=user)
     return CategoryResponse(id=o.id, name=o.name)
 
 
 @category_router.delete("/{category_id}", status_code=204, summary="Delete a category (409 while models use it)")
 def delete_category(category_id: uuid.UUID, user: User = CanManageAssets, db: Session = Depends(get_db)):
-    CatalogService(db).delete(DeviceCategory, category_id, "Category")
+    CatalogService(db).delete(DeviceCategory, category_id, "Category", actor=user)
     return Response(status_code=204)
 
 
 # ---- manufacturers -----------------------------------------------------------------------
 @manufacturer_router.post("", response_model=ManufacturerResponse, status_code=201, summary="Create a manufacturer")
 def create_manufacturer(body: ManufacturerCreate, user: User = CanManageAssets, db: Session = Depends(get_db)):
-    o = CatalogService(db).create_simple(Manufacturer, body.name)
+    o = CatalogService(db).create_simple(Manufacturer, body.name, actor=user)
     return ManufacturerResponse(id=o.id, name=o.name)
 
 
@@ -88,20 +88,20 @@ def get_manufacturer(manufacturer_id: uuid.UUID, user: User = CurrentUser, db: S
 
 @manufacturer_router.patch("/{manufacturer_id}", response_model=ManufacturerResponse, summary="Rename a manufacturer")
 def rename_manufacturer(manufacturer_id: uuid.UUID, body: ManufacturerUpdate, user: User = CanManageAssets, db: Session = Depends(get_db)):
-    o = CatalogService(db).rename(Manufacturer, manufacturer_id, body.name, "Manufacturer")
+    o = CatalogService(db).rename(Manufacturer, manufacturer_id, body.name, "Manufacturer", actor=user)
     return ManufacturerResponse(id=o.id, name=o.name)
 
 
 @manufacturer_router.delete("/{manufacturer_id}", status_code=204, summary="Delete a manufacturer (409 while models use it)")
 def delete_manufacturer(manufacturer_id: uuid.UUID, user: User = CanManageAssets, db: Session = Depends(get_db)):
-    CatalogService(db).delete(Manufacturer, manufacturer_id, "Manufacturer")
+    CatalogService(db).delete(Manufacturer, manufacturer_id, "Manufacturer", actor=user)
     return Response(status_code=204)
 
 
 # ---- models ---------------------------------------------------------------------------------
 @model_router.post("", response_model=DeviceModelResponse, status_code=201, summary="Create a device model")
 def create_model(body: DeviceModelCreate, user: User = CanManageAssets, db: Session = Depends(get_db)):
-    return _model_response(CatalogService(db).create_model(body.manufacturer_id, body.device_category_id, body.name))
+    return _model_response(CatalogService(db).create_model(body.manufacturer_id, body.device_category_id, body.name, actor=user))
 
 
 @model_router.get("", response_model=Page[DeviceModelResponse], summary="List device models")
@@ -126,10 +126,10 @@ def get_model(model_id: uuid.UUID, user: User = CurrentUser, db: Session = Depen
 
 @model_router.patch("/{model_id}", response_model=DeviceModelResponse, summary="Update a device model")
 def update_model(model_id: uuid.UUID, body: DeviceModelUpdate, user: User = CanManageAssets, db: Session = Depends(get_db)):
-    return _model_response(CatalogService(db).update_model(model_id, body.model_dump(exclude_unset=True)))
+    return _model_response(CatalogService(db).update_model(model_id, body.model_dump(exclude_unset=True), actor=user))
 
 
 @model_router.delete("/{model_id}", status_code=204, summary="Delete a device model (409 while devices use it)")
 def delete_model(model_id: uuid.UUID, user: User = CanManageAssets, db: Session = Depends(get_db)):
-    CatalogService(db).delete(DeviceModel, model_id, "Device model")
+    CatalogService(db).delete(DeviceModel, model_id, "Device model", actor=user)
     return Response(status_code=204)

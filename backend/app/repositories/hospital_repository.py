@@ -1,4 +1,7 @@
-"""Organization structure queries: hospitals, departments, locations (always organization-scoped)."""
+"""Organization structure queries: hospitals, departments, locations (always organization-scoped).
+
+Read methods take an optional `within_hospital` (B3.1 CP3): when set, results are limited to
+that one hospital - the AccessScope of every non-admin user. None means organization-wide."""
 import uuid
 from typing import List, Optional, Tuple
 
@@ -35,8 +38,11 @@ class HospitalRepository:
             select(Hospital).where(Hospital.id == hospital_id, Hospital.organization_id == organization_id)
         ).first()
 
-    def list_hospitals(self, org_id, page, page_size, q: Optional[str] = None, is_active: Optional[bool] = None) -> Tuple[List[Hospital], int]:
+    def list_hospitals(self, org_id, page, page_size, q: Optional[str] = None, is_active: Optional[bool] = None,
+                       within_hospital: Optional[uuid.UUID] = None) -> Tuple[List[Hospital], int]:
         stmt = select(Hospital).where(Hospital.organization_id == org_id)
+        if within_hospital is not None:
+            stmt = stmt.where(Hospital.id == within_hospital)
         if q:
             stmt = stmt.where(Hospital.name.ilike(f"%{q.strip()}%") | Hospital.code.ilike(f"%{q.strip()}%"))
         if is_active is not None:
@@ -49,13 +55,18 @@ class HospitalRepository:
             select(Department).where(Department.id == department_id, Department.hospital_id == hospital_id)
         ).first()
 
-    def get_department(self, org_id: uuid.UUID, department_id: uuid.UUID) -> Optional[Department]:
-        return self.db.scalars(
-            select(Department).where(Department.id == department_id, Department.hospital_id.in_(_hospital_ids(org_id)))
-        ).first()
+    def get_department(self, org_id: uuid.UUID, department_id: uuid.UUID,
+                       within_hospital: Optional[uuid.UUID] = None) -> Optional[Department]:
+        stmt = select(Department).where(Department.id == department_id, Department.hospital_id.in_(_hospital_ids(org_id)))
+        if within_hospital is not None:
+            stmt = stmt.where(Department.hospital_id == within_hospital)
+        return self.db.scalars(stmt).first()
 
-    def list_departments(self, org_id, page, page_size, hospital_id=None, q=None) -> Tuple[List[Department], int]:
+    def list_departments(self, org_id, page, page_size, hospital_id=None, q=None,
+                         within_hospital: Optional[uuid.UUID] = None) -> Tuple[List[Department], int]:
         stmt = select(Department).where(Department.hospital_id.in_(_hospital_ids(org_id)))
+        if within_hospital is not None:
+            stmt = stmt.where(Department.hospital_id == within_hospital)
         if hospital_id:
             stmt = stmt.where(Department.hospital_id == hospital_id)
         if q:
@@ -68,13 +79,18 @@ class HospitalRepository:
             select(Location).where(Location.id == location_id, Location.hospital_id == hospital_id)
         ).first()
 
-    def get_location(self, org_id: uuid.UUID, location_id: uuid.UUID) -> Optional[Location]:
-        return self.db.scalars(
-            select(Location).where(Location.id == location_id, Location.hospital_id.in_(_hospital_ids(org_id)))
-        ).first()
+    def get_location(self, org_id: uuid.UUID, location_id: uuid.UUID,
+                     within_hospital: Optional[uuid.UUID] = None) -> Optional[Location]:
+        stmt = select(Location).where(Location.id == location_id, Location.hospital_id.in_(_hospital_ids(org_id)))
+        if within_hospital is not None:
+            stmt = stmt.where(Location.hospital_id == within_hospital)
+        return self.db.scalars(stmt).first()
 
-    def list_locations(self, org_id, page, page_size, hospital_id=None) -> Tuple[List[Location], int]:
+    def list_locations(self, org_id, page, page_size, hospital_id=None,
+                       within_hospital: Optional[uuid.UUID] = None) -> Tuple[List[Location], int]:
         stmt = select(Location).where(Location.hospital_id.in_(_hospital_ids(org_id)))
+        if within_hospital is not None:
+            stmt = stmt.where(Location.hospital_id == within_hospital)
         if hospital_id:
             stmt = stmt.where(Location.hospital_id == hospital_id)
         return paginate(

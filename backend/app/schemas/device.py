@@ -1,6 +1,6 @@
 import uuid
 from datetime import date, datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -135,4 +135,48 @@ class DeviceResponse(BaseModel):
             current_risk_level=d.current_risk_level, installation_date=d.installation_date,
             warranty_expiry=d.warranty_expiry, next_maintenance_due_date=d.next_maintenance_due_date,
             is_archived=d.is_archived, created_at=d.created_at, updated_at=d.updated_at,
+        )
+
+
+class DeviceSummaryResponse(BaseModel):
+    """Limited device view (B3.1 CP3, approved QR exception).
+
+    Returned ONLY by `GET /devices/qr/{qr}` when a department user scans a device that belongs to
+    ANOTHER department of their own hospital: enough to identify the device (and, from B4, to
+    report a problem), nothing internal. Restricted fields are ABSENT, not null:
+    serial_number, criticality, current_risk_level, installation_date, warranty_expiry,
+    next_maintenance_due_date, organization_id, catalog ids and created/updated timestamps.
+
+    `access` is always "limited"; the full DeviceResponse never carries an `access` field, so
+    clients can tell the two shapes apart. extra="forbid" makes adding a field a deliberate act.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    access: Literal["limited"] = "limited"
+    id: uuid.UUID
+    device_code: str
+    name: str
+    qr_identifier: str
+    status: DeviceStatus
+    is_archived: bool
+    hospital_id: uuid.UUID
+    hospital_name: str
+    department_id: uuid.UUID
+    department_name: str
+    location_id: Optional[uuid.UUID] = None
+    location: Optional[str] = None
+    model_name: str
+    manufacturer_name: str
+    category_name: str
+
+    @classmethod
+    def from_device(cls, d: Device) -> "DeviceSummaryResponse":
+        return cls(
+            id=d.id, device_code=d.device_code, name=d.name, qr_identifier=d.qr_identifier,
+            status=d.status, is_archived=d.is_archived,
+            hospital_id=d.hospital_id, hospital_name=d.hospital.name,
+            department_id=d.department_id, department_name=d.department.name,
+            location_id=d.location_id, location=d.location.label if d.location else None,
+            model_name=d.model.name, manufacturer_name=d.model.manufacturer.name,
+            category_name=d.model.category.name,
         )

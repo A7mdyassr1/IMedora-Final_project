@@ -92,7 +92,9 @@ def test_database_rules_come_back_as_clear_errors(client, world, cat, eng):
     r = client.post(f"{API}/devices", headers=eng, json=device_body(world, cat, device_code="DUP-1"))
     assert r.status_code == 409 and "code already exists" in r.json()["error"]["message"]
     # same code in ANOTHER hospital is fine (unique per hospital)
-    ok = client.post(f"{API}/devices", headers=eng, json=device_body(world, cat, device_code="DUP-1", hospital_id=world["h2"], department_id=world["rad"]))
+    # CP3 setup change: the H1 engineer may no longer write in H2, so the admin creates the H2 device.
+    admin = auth(client, world["admin"])
+    ok = client.post(f"{API}/devices", headers=admin, json=device_body(world, cat, device_code="DUP-1", hospital_id=world["h2"], department_id=world["rad"]))
     assert ok.status_code == 201
     r = client.post(f"{API}/devices", headers=eng, json=device_body(world, cat, qr_identifier=d["qr_identifier"]))
     assert r.status_code == 409 and "QR identifier" in r.json()["error"]["message"]
@@ -138,10 +140,13 @@ def test_list_filters_search_sort_and_pagination(client, world, cat, eng):
     a = make_device(client, eng, world, cat, name="Alpha Vent", device_code="A-1", serial_number="SERIAL-AAA", criticality="critical")
     b = make_device(client, eng, world, cat, name="Bravo Monitor", device_code="B-1", device_model_id=cat["model_b"],
                     department_id=world["icu"], status="out_of_service", criticality="low")
-    c = make_device(client, eng, world, cat, name="Charlie Vent", device_code="C-1", hospital_id=world["h2"], department_id=world["rad"])
+    # CP3 setup change: devices span two hospitals, so the H2 device is created - and the list is
+    # read - by the organization-wide admin (an H1 engineer now sees H1 only; see test_access_scope.py).
+    admin = auth(client, world["admin"])
+    c = make_device(client, admin, world, cat, name="Charlie Vent", device_code="C-1", hospital_id=world["h2"], department_id=world["rad"])
 
     def ids(**params):
-        r = client.get(f"{API}/devices", headers=eng, params=params)
+        r = client.get(f"{API}/devices", headers=admin, params=params)
         assert r.status_code == 200, r.text
         return {i["id"] for i in r.json()["items"]}
 
@@ -157,9 +162,9 @@ def test_list_filters_search_sort_and_pagination(client, world, cat, eng):
     assert ids(q="serial-aaa") == {a["id"]}
     assert ids(q=c["qr_identifier"][:10].lower()) >= {c["id"]}
 
-    page = client.get(f"{API}/devices", headers=eng, params={"sort": "name", "order": "desc", "page_size": 2}).json()
+    page = client.get(f"{API}/devices", headers=admin, params={"sort": "name", "order": "desc", "page_size": 2}).json()
     assert [i["name"] for i in page["items"]] == ["Charlie Vent", "Bravo Monitor"] and page["total"] == 3
-    page2 = client.get(f"{API}/devices", headers=eng, params={"sort": "name", "order": "desc", "page_size": 2, "page": 2}).json()
+    page2 = client.get(f"{API}/devices", headers=admin, params={"sort": "name", "order": "desc", "page_size": 2, "page": 2}).json()
     assert [i["name"] for i in page2["items"]] == ["Alpha Vent"]
     assert client.get(f"{API}/devices", headers=eng, params={"sort": "password"}).status_code == 422
     assert client.get(f"{API}/devices", headers=eng, params={"status": "exploded"}).status_code == 422
@@ -192,14 +197,100 @@ def test_qr_lookup(client, world, cat, eng):
     assert r.status_code == 404 and r.json()["error"]["code"] == "not_found"
 
 
+def test_qr_lookup_still_finds_legacy_lower_case_values(client, world, cat, eng):
+    """Rows written directly in SQL (not through the API) may be lower-case. They must keep
+    working, scanned either as printed or upper-cased, without a function-based scan."""
+    d = make_device(client, eng, world, cat)
+    legacy = f"qr-legacy-{world['sfx']}"
+    with get_session_factory()() as db:
+        db.execute(text("UPDATE devices SET qr_identifier = :q WHERE id = :i"), {"q": legacy, "i": d["id"]})
+        db.commit()
+    staff = auth(client, world["staff"])
+    assert client.get(f"{API}/devices/qr/{legacy}", headers=staff).json()["id"] == d["id"]
+    assert client.get(f"{API}/devices/qr/{legacy.upper()}", headers=staff).json()["id"] == d["id"]
+    assert client.get(f"{API}/devices/qr/%20{legacy}%20", headers=staff).json()["id"] == d["id"]  # stray spaces
+
+
+def test_qr_lookup_stays_inside_the_organization(client, world, cat, eng):
+    d = make_device(client, eng, world, cat, qr_identifier=f"QR-{world['sfx']}-ORG")
+    stranger = auth(client, f"stranger-{world['sfx']}@b2.test")  # a user of ANOTHER organization
+    r = client.get(f"{API}/devices/qr/{d['qr_identifier']}", headers=stranger)
+    assert r.status_code == 404
+
+
 # ---- archive --------------------------------------------------------------------------------------
+def test_qr_check_script_cannot_write(real_db_url):
+    """scripts/check_qr_identifiers.py must be strictly read-only: PostgreSQL itself rejects writes."""
+    from sqlalchemy.exc import DBAPIError
+    from scripts.check_qr_identifiers import read_only_engine
+
+    engine = read_only_engine(real_db_url)
+    try:
+        with engine.connect() as conn:
+            assert conn.execute(text("SHOW transaction_read_only")).scalar() == "on"
+            with pytest.raises(DBAPIError) as exc:
+                conn.execute(text("UPDATE devices SET qr_identifier = qr_identifier WHERE false"))
+            assert exc.value.orig.pgcode == "25006"  # read_only_sql_transaction
+    finally:
+        engine.dispose()
+
+
+def test_qr_check_script_flags_every_problem_kind(client, world, cat, eng, real_db_url):
+    from scripts.check_qr_identifiers import read_only_engine, run_checks
+
+    sfx = world["sfx"].upper()
+    bad = {  # stored values the API would never write - put in directly, as legacy SQL could
+        "blank": "   ",
+        "mixed": f"Qr-Mixed-{sfx}",
+        "spaced": f" QR-SPACED-{sfx} ",
+        "chars": f"QR#{sfx}",
+        "clash_a": f"QR-CLASH-{sfx}",
+        "clash_b": f"qr-clash-{sfx}",
+    }
+    codes = {}
+    with get_session_factory()() as db:
+        for kind, qr in bad.items():
+            d = make_device(client, eng, world, cat)
+            db.execute(text("UPDATE devices SET qr_identifier = :q WHERE id = :i"), {"q": qr, "i": d["id"]})
+            codes[kind] = d["device_code"]
+        db.commit()
+
+    lines = []
+    engine = read_only_engine(real_db_url)
+    try:
+        with engine.connect() as conn:
+            issues = run_checks(conn, out=lines.append)
+            conn.rollback()
+    finally:
+        engine.dispose()
+
+    report = "\n".join(lines)
+    assert issues >= 5  # blank, mixed, spaced, chars, one clash group
+    section = {line.split(":")[0]: i for i, line in enumerate(lines) if not line.startswith(" ")}
+
+    def listed_under(title_start, needle):
+        start = next(i for t, i in section.items() if t.startswith(title_start))
+        following = [i for i in section.values() if i > start]
+        end = min(following) if following else len(lines)
+        return any(needle in line for line in lines[start + 1:end])
+
+    assert listed_under("empty or whitespace-only", f"code={codes['blank']}")
+    assert listed_under("mixed case", f"code={codes['mixed']}")
+    assert listed_under("leading/trailing whitespace", f"code={codes['spaced']}")
+    assert listed_under("characters outside", f"code={codes['chars']}")
+    assert f"'QR-CLASH-{sfx}' x2" in report
+    # the blank value is reported once, not again under "characters outside"
+    assert not listed_under("characters outside", f"code={codes['blank']}")
+
+
 def test_archive_is_a_soft_delete(client, world, cat, eng):
     d = make_device(client, eng, world, cat)
     r = client.delete(f"{API}/devices/{d['id']}", headers=eng)
     assert r.status_code == 200 and r.json()["is_archived"] is True and r.json()["status"] == "decommissioned"
     assert client.delete(f"{API}/devices/{d['id']}", headers=eng).status_code == 200  # idempotent
     assert d["id"] not in {i["id"] for i in client.get(f"{API}/devices", headers=eng).json()["items"]}
-    shown = client.get(f"{API}/devices", headers=eng, params={"include_archived": True}).json()["items"]
+    # CP3 setup change: include_archived=true is admin-only (Decision 3), so the admin lists it.
+    shown = client.get(f"{API}/devices", headers=auth(client, world["admin"]), params={"include_archived": True}).json()["items"]
     assert d["id"] in {i["id"] for i in shown}
     assert client.get(f"{API}/devices/{d['id']}", headers=eng).json()["is_archived"] is True   # history can still resolve it
     assert client.get(f"{API}/devices/qr/{d['qr_identifier']}", headers=eng).status_code == 200

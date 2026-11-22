@@ -7,9 +7,8 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.exceptions import ForbiddenError, UnauthorizedError
 from app.core.roles import Role
-from app.core.security import decode_access_token
 from app.models.user import User
-from app.repositories.user_repository import UserRepository
+from app.services.auth_service import AuthService
 
 # auto_error=False: we raise our own 401 so the body matches every other error.
 bearer_scheme = HTTPBearer(auto_error=False, description="Paste the access_token from POST /api/v1/auth/login")
@@ -21,12 +20,9 @@ def get_current_user(
 ) -> User:
     if credentials is None:
         raise UnauthorizedError("Authentication required.")
-    user_id = decode_access_token(credentials.credentials)
-    # Re-read on every request so deactivation / role changes take effect immediately.
-    user = UserRepository(db).get_by_id(user_id)
-    if user is None or not user.is_active or user.deleted_at is not None:
-        raise UnauthorizedError("Invalid or expired token.")
-    return user
+    # Signature, expiry, password stamp, and user/organization/hospital active status:
+    # all checked on every request (AuthService.user_for_token).
+    return AuthService(db).user_for_token(credentials.credentials)
 
 
 def require_roles(*roles: Role):

@@ -45,5 +45,19 @@ def test_password_never_appears_in_repr():
     assert "secretpw" not in repr(s) and "secretpw" not in str(s)
 
 
+def test_access_token_lifetime_defaults_to_one_shift(monkeypatch):
+    monkeypatch.delenv("ACCESS_TOKEN_EXPIRE_MINUTES", raising=False)
+    assert make(database_url=URL).access_token_expire_minutes == 480
+
+
+def test_access_token_lifetime_is_configurable_within_bounds(monkeypatch):
+    monkeypatch.setenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60")
+    assert make(database_url=URL).access_token_expire_minutes == 60
+    for bad in ("0", "1441"):
+        monkeypatch.setenv("ACCESS_TOKEN_EXPIRE_MINUTES", bad)
+        with pytest.raises(ValidationError):
+            make(database_url=URL)
+
+
 def test_log_level_is_case_insensitive():
     assert make(database_url=URL, log_level="debug").log_level == "DEBUG"

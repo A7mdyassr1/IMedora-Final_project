@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.orm import Session
 
 from app.api.deps import AdminOnly, CurrentUser, Pagination, pagination_params
+from app.core.access import scope_for
 from app.core.database import get_db
 from app.models.user import User
 from app.schemas.common import Page
@@ -32,13 +33,13 @@ def get_organization(user: User = CurrentUser, db: Session = Depends(get_db)):
 
 @org_router.patch("/current", response_model=OrganizationResponse, summary="Rename your organization")
 def rename_organization(body: OrganizationUpdate, admin: User = AdminOnly, db: Session = Depends(get_db)):
-    return OrganizationResponse.model_validate(StructureService(db).rename_organization(admin.organization_id, body.name), from_attributes=True)
+    return OrganizationResponse.model_validate(StructureService(db).rename_organization(admin.organization_id, body.name, actor=admin), from_attributes=True)
 
 
 # ---- hospitals --------------------------------------------------------------------
 @hospital_router.post("", response_model=HospitalResponse, status_code=201, summary="Create a hospital")
 def create_hospital(body: HospitalCreate, admin: User = AdminOnly, db: Session = Depends(get_db)):
-    return HospitalResponse.model_validate(StructureService(db).create_hospital(admin.organization_id, body), from_attributes=True)
+    return HospitalResponse.model_validate(StructureService(db).create_hospital(admin.organization_id, body, actor=admin), from_attributes=True)
 
 
 @hospital_router.get("", response_model=Page[HospitalResponse], summary="List hospitals")
@@ -49,24 +50,24 @@ def list_hospitals(
     user: User = CurrentUser,
     db: Session = Depends(get_db),
 ):
-    items, total = StructureService(db).repo.list_hospitals(user.organization_id, p.page, p.page_size, q, is_active)
+    items, total = StructureService(db).list_hospitals(scope_for(user), p.page, p.page_size, q, is_active)
     return _page(items, total, p, HospitalResponse)
 
 
 @hospital_router.get("/{hospital_id}", response_model=HospitalResponse, summary="Get a hospital")
 def get_hospital(hospital_id: uuid.UUID, user: User = CurrentUser, db: Session = Depends(get_db)):
-    return HospitalResponse.model_validate(StructureService(db).get_hospital(user.organization_id, hospital_id), from_attributes=True)
+    return HospitalResponse.model_validate(StructureService(db).read_hospital(scope_for(user), hospital_id), from_attributes=True)
 
 
 @hospital_router.patch("/{hospital_id}", response_model=HospitalResponse, summary="Update / deactivate a hospital")
 def update_hospital(hospital_id: uuid.UUID, body: HospitalUpdate, admin: User = AdminOnly, db: Session = Depends(get_db)):
-    return HospitalResponse.model_validate(StructureService(db).update_hospital(admin.organization_id, hospital_id, body), from_attributes=True)
+    return HospitalResponse.model_validate(StructureService(db).update_hospital(admin.organization_id, hospital_id, body, actor=admin), from_attributes=True)
 
 
 # ---- departments -----------------------------------------------------------------------
 @department_router.post("", response_model=DepartmentResponse, status_code=201, summary="Create a department")
 def create_department(body: DepartmentCreate, admin: User = AdminOnly, db: Session = Depends(get_db)):
-    return DepartmentResponse.model_validate(StructureService(db).create_department(admin.organization_id, body), from_attributes=True)
+    return DepartmentResponse.model_validate(StructureService(db).create_department(admin.organization_id, body, actor=admin), from_attributes=True)
 
 
 @department_router.get("", response_model=Page[DepartmentResponse], summary="List departments")
@@ -77,23 +78,23 @@ def list_departments(
     user: User = CurrentUser,
     db: Session = Depends(get_db),
 ):
-    items, total = StructureService(db).repo.list_departments(user.organization_id, p.page, p.page_size, hospital_id, q)
+    items, total = StructureService(db).list_departments(scope_for(user), p.page, p.page_size, hospital_id, q)
     return _page(items, total, p, DepartmentResponse)
 
 
 @department_router.get("/{department_id}", response_model=DepartmentResponse, summary="Get a department")
 def get_department(department_id: uuid.UUID, user: User = CurrentUser, db: Session = Depends(get_db)):
-    return DepartmentResponse.model_validate(StructureService(db).get_department(user.organization_id, department_id), from_attributes=True)
+    return DepartmentResponse.model_validate(StructureService(db).read_department(scope_for(user), department_id), from_attributes=True)
 
 
 @department_router.patch("/{department_id}", response_model=DepartmentResponse, summary="Rename a department")
 def update_department(department_id: uuid.UUID, body: DepartmentUpdate, admin: User = AdminOnly, db: Session = Depends(get_db)):
-    return DepartmentResponse.model_validate(StructureService(db).update_department(admin.organization_id, department_id, body), from_attributes=True)
+    return DepartmentResponse.model_validate(StructureService(db).update_department(admin.organization_id, department_id, body, actor=admin), from_attributes=True)
 
 
 @department_router.delete("/{department_id}", status_code=204, summary="Delete a department (409 while devices use it)")
 def delete_department(department_id: uuid.UUID, admin: User = AdminOnly, db: Session = Depends(get_db)):
-    StructureService(db).delete_department(admin.organization_id, department_id)
+    StructureService(db).delete_department(admin.organization_id, department_id, actor=admin)
     return Response(status_code=204)
 
 
@@ -104,7 +105,7 @@ def _location_response(loc) -> LocationResponse:
 
 @location_router.post("", response_model=LocationResponse, status_code=201, summary="Create a location")
 def create_location(body: LocationCreate, admin: User = AdminOnly, db: Session = Depends(get_db)):
-    return _location_response(StructureService(db).create_location(admin.organization_id, body))
+    return _location_response(StructureService(db).create_location(admin.organization_id, body, actor=admin))
 
 
 @location_router.get("", response_model=Page[LocationResponse], summary="List locations")
@@ -114,21 +115,21 @@ def list_locations(
     user: User = CurrentUser,
     db: Session = Depends(get_db),
 ):
-    items, total = StructureService(db).repo.list_locations(user.organization_id, p.page, p.page_size, hospital_id)
+    items, total = StructureService(db).list_locations(scope_for(user), p.page, p.page_size, hospital_id)
     return Page[LocationResponse](items=[_location_response(i) for i in items], total=total, page=p.page, page_size=p.page_size)
 
 
 @location_router.get("/{location_id}", response_model=LocationResponse, summary="Get a location")
 def get_location(location_id: uuid.UUID, user: User = CurrentUser, db: Session = Depends(get_db)):
-    return _location_response(StructureService(db).get_location(user.organization_id, location_id))
+    return _location_response(StructureService(db).read_location(scope_for(user), location_id))
 
 
 @location_router.patch("/{location_id}", response_model=LocationResponse, summary="Update a location")
 def update_location(location_id: uuid.UUID, body: LocationUpdate, admin: User = AdminOnly, db: Session = Depends(get_db)):
-    return _location_response(StructureService(db).update_location(admin.organization_id, location_id, body))
+    return _location_response(StructureService(db).update_location(admin.organization_id, location_id, body, actor=admin))
 
 
 @location_router.delete("/{location_id}", status_code=204, summary="Delete a location (devices are detached, not deleted)")
 def delete_location(location_id: uuid.UUID, admin: User = AdminOnly, db: Session = Depends(get_db)):
-    StructureService(db).delete_location(admin.organization_id, location_id)
+    StructureService(db).delete_location(admin.organization_id, location_id, actor=admin)
     return Response(status_code=204)

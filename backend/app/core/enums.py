@@ -21,3 +21,10 @@ class RiskLevel(StrEnum):
     MEDIUM = "medium"
     HIGH = "high"
     CRITICAL = "critical"
+
+
+class AuditAction(StrEnum):
+    """Mirror of the PostgreSQL `audit_action` enum (migration 0005)."""
+    INSERT = "insert"
+    UPDATE = "update"
+    DELETE = "delete"

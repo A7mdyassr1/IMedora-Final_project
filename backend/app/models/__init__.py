@@ -1,4 +1,5 @@
 # Import every model so SQLAlchemy can resolve all ForeignKey/relationship targets.
+from app.models.audit_log import AuditLog
 from app.models.base import Base
 from app.models.catalog import DeviceCategory, DeviceModel, Manufacturer
 from app.models.department import Department
@@ -10,6 +11,6 @@ from app.models.role import Role
 from app.models.user import User
 
 __all__ = [
-    "Base", "Department", "Device", "DeviceCategory", "DeviceModel", "Hospital",
+    "AuditLog", "Base", "Department", "Device", "DeviceCategory", "DeviceModel", "Hospital",
     "Location", "Manufacturer", "Organization", "Role", "User",
 ]

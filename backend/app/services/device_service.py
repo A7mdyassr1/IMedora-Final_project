@@ -1,19 +1,20 @@
 import logging
 import secrets
-import uuid
 from datetime import datetime, timezone
 from typing import List, Tuple
 
 from sqlalchemy.orm import Session
 
+from app.core.access import AccessScope
 from app.core.enums import DeviceStatus
-from app.core.exceptions import BadRequestError, NotFoundError
+from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
 from app.models.catalog import DeviceModel
 from app.models.device import Device
 from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.device_repository import DeviceFilters, DeviceRepository
 from app.repositories.hospital_repository import HospitalRepository
 from app.schemas.device import DeviceCreate, DeviceUpdate
+from app.services.audit_service import AuditService, snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -28,11 +29,15 @@ class DeviceService:
         self.devices = DeviceRepository(db)
         self.structure = HospitalRepository(db)
         self.catalog = CatalogRepository(db)
+        self.audit = AuditService(db)
 
     # -- validation helpers ------------------------------------------------------
-    def _check_placement(self, org_id, hospital_id, department_id=None, location_id=None) -> None:
-        if self.structure.get_in_organization(org_id, hospital_id) is None:
+    def _check_placement(self, org_id, hospital_id, department_id=None, location_id=None, require_active: bool = False) -> None:
+        hospital = self.structure.get_in_organization(org_id, hospital_id)
+        if hospital is None:
             raise BadRequestError("Hospital does not exist in your organization.")
+        if require_active and not hospital.is_active:  # Decision 6: nothing new is added to an inactive hospital
+            raise BadRequestError("Hospital is inactive; devices cannot be added to it.")
         if department_id is not None and self.structure.get_department_in_hospital(hospital_id, department_id) is None:
             raise BadRequestError("Department does not belong to this device's hospital.")
         if location_id is not None and self.structure.get_location_in_hospital(hospital_id, location_id) is None:
@@ -43,8 +48,16 @@ class DeviceService:
             raise BadRequestError("Device model does not exist.")
 
     # -- operations ---------------------------------------------------------------
-    def create(self, org_id: uuid.UUID, data: DeviceCreate) -> Device:
-        self._check_placement(org_id, data.hospital_id, data.department_id, data.location_id)
+    def create(self, scope: AccessScope, data: DeviceCreate) -> Device:
+        org_id = scope.organization_id
+        scope.require_device_access()
+        # CP3: an engineer may only register devices in their own hospital. Another hospital gets
+        # exactly the answer a non-existent hospital gets (existing 400 convention), so the API
+        # does not reveal which hospital ids exist. Department and location are then checked
+        # against that same hospital by _check_placement.
+        if scope.device_hospital_id is not None and data.hospital_id != scope.device_hospital_id:
+            raise BadRequestError("Hospital does not exist in your organization.")
+        self._check_placement(org_id, data.hospital_id, data.department_id, data.location_id, require_active=True)
         self._check_model(data.device_model_id)
         device = self.devices.add(
             Device(
@@ -56,27 +69,37 @@ class DeviceService:
                 installation_date=data.installation_date, warranty_expiry=data.warranty_expiry,
             )
         )
-        self.db.commit()  # duplicate code/QR and warranty-date rules are enforced (and explained) via PostgreSQL
+        self.audit.inserted(scope.user_id, device)
+        # Duplicate code/QR and warranty-date rules are enforced (and explained) via PostgreSQL;
+        # if the commit fails, the audit row is rolled back with it.
+        self.db.commit()
         logger.info("Device created id=%s", device.id)
-        return self.get(org_id, device.id)
+        return self.get(scope, device.id)
 
-    def get(self, org_id, device_id) -> Device:
-        d = self.devices.get(org_id, device_id)
+    def get(self, scope: AccessScope, device_id) -> Device:
+        """404 both for unknown devices and for devices outside the caller's scope (never 403:
+        the API must not reveal that a device exists in another hospital or department)."""
+        scope.require_device_access()
+        d = self.devices.get(scope, device_id)
         if d is None:
             raise NotFoundError("Device not found.")
         return d
 
-    def get_by_qr(self, org_id, qr_identifier: str) -> Device:
-        d = self.devices.get_by_qr(org_id, qr_identifier)
+    def get_by_qr(self, scope: AccessScope, qr_identifier: str) -> Device:
+        d = self.devices.get_by_qr(scope.qr_lookup_scope(), qr_identifier)
         if d is None:
             raise NotFoundError("No device found for this QR code.")
         return d
 
-    def list(self, org_id, filters: DeviceFilters, sort: str, descending: bool, page: int, page_size: int) -> Tuple[List[Device], int]:
-        return self.devices.list(org_id, filters, sort, descending, page, page_size)
+    def list(self, scope: AccessScope, filters: DeviceFilters, sort: str, descending: bool, page: int, page_size: int) -> Tuple[List[Device], int]:
+        scope.require_device_access()
+        if filters.include_archived and not scope.is_admin:  # Decision 6 / CP3: admins only, never ignored silently
+            raise ForbiddenError("Only administrators can include archived devices.")
+        return self.devices.list(scope, filters, sort, descending, page, page_size)
 
-    def update(self, org_id, device_id, data: DeviceUpdate, acting_user_id) -> Device:
-        d = self.get(org_id, device_id)
+    def update(self, scope: AccessScope, device_id, data: DeviceUpdate) -> Device:
+        org_id = scope.organization_id
+        d = self.get(scope, device_id)  # a device outside the caller's scope is a 404
         if d.is_archived:
             raise BadRequestError("Archived devices cannot be modified.")
         changes = data.model_dump(exclude_unset=True)
@@ -87,18 +110,24 @@ class DeviceService:
             )
         if "device_model_id" in changes:
             self._check_model(changes["device_model_id"])
+        # Devices cannot move between hospitals here, so editing a device inside an inactive
+        # hospital stays allowed (Decision 6 only blocks adding new records).
+        before = snapshot(d)
         for field, value in changes.items():
             setattr(d, field, value)
+        self.audit.updated(scope.user_id, d, before)
         self.db.commit()
-        logger.info("Device updated id=%s fields=%s by=%s", d.id, sorted(changes), acting_user_id)
-        return self.get(org_id, d.id)
+        logger.info("Device updated id=%s fields=%s by=%s", d.id, sorted(changes), scope.user_id)
+        return self.get(scope, d.id)
 
-    def archive(self, org_id, device_id, acting_user_id) -> Device:
+    def archive(self, scope: AccessScope, device_id) -> Device:
         """Soft delete: devices with history can't be physically deleted (RESTRICT) and shouldn't be."""
-        d = self.get(org_id, device_id)
+        d = self.get(scope, device_id)  # a device outside the caller's scope is a 404
         if not d.is_archived:
+            before = snapshot(d)
             d.deleted_at = datetime.now(timezone.utc)
             d.status = DeviceStatus.DECOMMISSIONED
+            self.audit.updated(scope.user_id, d, before)  # archive = UPDATE (soft delete), not DELETE
             self.db.commit()
-            logger.info("Device archived id=%s by=%s", d.id, acting_user_id)
-        return self.get(org_id, d.id)
+            logger.info("Device archived id=%s by=%s", d.id, scope.user_id)
+        return self.get(scope, d.id)

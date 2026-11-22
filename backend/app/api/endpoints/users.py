@@ -19,7 +19,7 @@ AdminUser = Depends(require_roles(Role.ADMIN))
 
 @router.post("", response_model=UserResponse, status_code=201, summary="Create a user")
 def create_user(data: UserCreate, admin: User = AdminUser, db: Session = Depends(get_db)):
-    return UserResponse.model_validate(UserService(db).create_user(admin.organization_id, data))
+    return UserResponse.model_validate(UserService(db).create_user(admin.organization_id, data, acting=admin))
 
 
 @router.get("", response_model=Page[UserResponse], summary="List users (paginated)")

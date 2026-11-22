@@ -12,6 +12,7 @@ from app.repositories.hospital_repository import HospitalRepository
 from app.repositories.role_repository import RoleRepository
 from app.repositories.user_repository import UserRepository
 from app.schemas.user import UserCreate, UserUpdate
+from app.services.audit_service import PASSWORD_CHANGED, AuditService, snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,7 @@ class UserService:
         self.users = UserRepository(db)
         self.roles = RoleRepository(db)
         self.hospitals = HospitalRepository(db)
+        self.audit = AuditService(db)
 
     # -- helpers --------------------------------------------------------------
     def _get_in_org(self, organization_id: uuid.UUID, user_id: uuid.UUID) -> User:
@@ -39,14 +41,17 @@ class UserService:
             raise BadRequestError(f"Role '{role.value}' is not configured in this database.")
         return row.id
 
-    def _validate_placement(self, organization_id, hospital_id, department_id) -> None:
-        if self.hospitals.get_in_organization(organization_id, hospital_id) is None:
+    def _validate_placement(self, organization_id, hospital_id, department_id, require_active: bool = True) -> None:
+        hospital = self.hospitals.get_in_organization(organization_id, hospital_id)
+        if hospital is None:
             raise BadRequestError("Hospital does not exist in your organization.")
+        if require_active and not hospital.is_active:  # Decision 6: nothing new is added to an inactive hospital
+            raise BadRequestError("Hospital is inactive; users cannot be added to it.")
         if department_id is not None and self.hospitals.get_department_in_hospital(hospital_id, department_id) is None:
             raise BadRequestError("Department does not belong to the selected hospital.")
 
     # -- operations -------------------------------------------------------------
-    def create_user(self, organization_id: uuid.UUID, data: UserCreate) -> User:
+    def create_user(self, organization_id: uuid.UUID, data: UserCreate, acting: Optional[User] = None) -> User:
         if self.users.get_by_email(data.email):
             raise ConflictError("A user with this email already exists.")
         role_id = self._role_id(data.role)
@@ -64,6 +69,7 @@ class UserService:
                 is_active=True,
             )
         )
+        self.audit.inserted(acting.id if acting else None, user)
         self.db.commit()
         logger.info("User created user_id=%s role=%s", user.id, data.role.value)
         return self.users.get_by_id(user.id)  # reload with role/hospital/department
@@ -77,6 +83,7 @@ class UserService:
     def update_user(self, organization_id: uuid.UUID, acting: User, user_id: uuid.UUID, data: UserUpdate) -> User:
         user = self._get_in_org(organization_id, user_id)
         changes = data.model_dump(exclude_unset=True)
+        before = snapshot(user)
 
         if user.id == acting.id:  # lock-out protection
             if changes.get("is_active") is False:
@@ -97,15 +104,19 @@ class UserService:
         if "hospital_id" in changes or "department_id" in changes:
             hospital_id = changes.get("hospital_id", user.hospital_id)
             department_id = changes.get("department_id", user.department_id)
-            self._validate_placement(organization_id, hospital_id, department_id)
+            # Moving a user INTO an inactive hospital counts as adding; edits inside it are allowed.
+            self._validate_placement(organization_id, hospital_id, department_id,
+                                     require_active=hospital_id != user.hospital_id)
             user.hospital_id, user.department_id = hospital_id, department_id
 
+        self.audit.updated(acting.id, user, before)
         self.db.commit()
         logger.info("User updated user_id=%s fields=%s by=%s", user.id, sorted(changes), acting.id)
         return self.users.get_by_id(user.id)
 
     def reset_password(self, organization_id: uuid.UUID, acting: User, user_id: uuid.UUID, new_password: str) -> None:
         user = self._get_in_org(organization_id, user_id)
-        user.password_hash = hash_password(new_password)
+        user.password_hash = hash_password(new_password)  # also invalidates the user's tokens (password stamp)
+        self.audit.updated(acting.id, user, snapshot(user), extra_new=dict(PASSWORD_CHANGED))
         self.db.commit()
         logger.info("Password reset user_id=%s by=%s", user.id, acting.id)

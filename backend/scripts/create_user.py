@@ -20,6 +20,7 @@ import sys
 from sqlalchemy import select
 
 from app.core.database import get_session_factory
+from app.core.exceptions import AppError
 from app.core.roles import Role
 from app.core.security import hash_password
 from app.models.department import Department
@@ -28,6 +29,7 @@ from app.models.organization import Organization
 from app.repositories.role_repository import RoleRepository
 from app.repositories.user_repository import UserRepository
 from app.schemas.user import MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH, UserCreate
+from app.services.audit_service import PASSWORD_CHANGED, AuditService, snapshot
 from app.services.user_service import UserService
 
 
@@ -64,11 +66,15 @@ def main() -> None:
         if args.reset_password:
             if existing is None or existing.organization_id != org.id:
                 sys.exit("No such user in that organization.")
-            existing.password_hash = hash_password(read_password())
+            existing.password_hash = hash_password(read_password())  # also invalidates existing tokens
+            # Audited with no acting user: the change was made from the command line.
+            AuditService(db).updated(None, existing, snapshot(existing), extra_new=dict(PASSWORD_CHANGED))
             db.commit()
             print(f"Password updated for {existing.email}.")
             return
 
+        if not org.is_active:
+            sys.exit(f"Organization '{org.code}' is inactive; users cannot be added to it.")
         if existing is not None:
             sys.exit("A user with that email already exists (use --reset-password to change the password).")
         if not (args.full_name and args.hospital_code):
@@ -91,17 +97,20 @@ def main() -> None:
 
         RoleRepository(db).ensure_standard_roles()
         db.commit()
-        user = UserService(db).create_user(
-            org.id,
-            UserCreate(
-                email=args.email,
-                full_name=args.full_name,
-                password=read_password(),
-                role=Role(args.role),
-                hospital_id=hospital.id,
-                department_id=department_id,
-            ),
-        )
+        try:  # audited by UserService with no acting user (command line)
+            user = UserService(db).create_user(
+                org.id,
+                UserCreate(
+                    email=args.email,
+                    full_name=args.full_name,
+                    password=read_password(),
+                    role=Role(args.role),
+                    hospital_id=hospital.id,
+                    department_id=department_id,
+                ),
+            )
+        except AppError as exc:  # e.g. the hospital is inactive
+            sys.exit(exc.message)
         print(f"Created {user.role_name} {user.email} ({user.id}).")
 
 

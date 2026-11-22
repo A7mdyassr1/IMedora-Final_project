@@ -3,11 +3,11 @@ Needs TEST_DATABASE_URL (see conftest.py). Torn down bottom-up, scoped to the ro
 import uuid
 
 import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 
 from app.core.database import get_session_factory
 from app.core.security import hash_password
-from app.models import Department, Hospital, Organization, Role, User
+from app.models import AuditLog, Department, Hospital, Organization, Role, User
 from app.repositories.role_repository import RoleRepository
 
 PW = "Correct-Horse-9"
@@ -57,6 +57,12 @@ def world(real_db_url):
     with factory() as db:  # bottom-up, scoped to the two test organizations
         orgs = [uuid.UUID(data["org"]), uuid.UUID(data["other"])]
         hosp_ids = select(Hospital.id).where(Hospital.organization_id.in_(orgs))
+        user_ids = select(User.id).where(User.organization_id.in_(orgs))
+        # audit_logs RESTRICTs both organizations and users, so the test's audit rows go first.
+        # (Test databases only: audit_logs is append-only in real use.)
+        db.execute(delete(AuditLog).where(
+            or_(AuditLog.organization_id.in_(orgs), AuditLog.user_id.in_(user_ids))
+        ))
         db.execute(delete(User).where(User.organization_id.in_(orgs)))
         db.execute(delete(Department).where(Department.hospital_id.in_(hosp_ids)))
         db.execute(delete(Hospital).where(Hospital.organization_id.in_(orgs)))
