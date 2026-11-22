@@ -4,8 +4,9 @@ TEST_DATABASE_URL is set (the `real_db_url` fixture). Read-only: it reflects the
 creates, alters or migrates anything (no create_all, no autogenerate).
 
 The database layer (database/migrations) owns the schema; the ORM is a mirror. Only the tables the
-backend actually maps are compared - the B4+ tables (tickets, maintenance, parts, ...) are listed
-for information but not treated as implemented models. A mismatch FAILS with a description; it is
+backend actually maps are compared; tables of later phases (parts, risk, QA, attachments,
+notifications) are not treated as implemented models until they are mapped. B4 CP1 added the
+five ticket / maintenance tables, with a stricter check (constraint and index names) for them. A mismatch FAILS with a description; it is
 never "fixed" automatically.
 """
 import pytest
@@ -19,7 +20,10 @@ MAPPED = sorted(Base.metadata.tables)
 EXPECTED_MAPPED = sorted([
     "audit_logs", "departments", "device_categories", "device_models", "devices", "hospitals",
     "locations", "manufacturers", "organizations", "roles", "users",
+    # B4 CP1
+    "maintenance_records", "maintenance_schedules", "maintenance_tickets", "maintenance_types", "ticket_assignments",
 ])
+B4_TABLES = ["maintenance_records", "maintenance_schedules", "maintenance_tickets", "maintenance_types", "ticket_assignments"]
 
 
 @pytest.fixture
@@ -80,10 +84,11 @@ def test_primary_and_foreign_keys_match_including_ondelete(insp, table):
 
 
 def test_enum_labels_match_the_backend_enums(insp):
-    from app.core.enums import AuditAction, Criticality, DeviceStatus, RiskLevel
+    from app.core.enums import AuditAction, Criticality, DeviceStatus, RiskLevel, TicketPriority, TicketStatus
     live = {e["name"]: e["labels"] for e in insp.get_enums()}
     for name, enum in (("device_status", DeviceStatus), ("device_criticality", Criticality),
-                       ("risk_level", RiskLevel), ("audit_action", AuditAction)):
+                       ("risk_level", RiskLevel), ("audit_action", AuditAction),
+                       ("ticket_status", TicketStatus), ("ticket_priority", TicketPriority)):
         assert live.get(name) == [m.value for m in enum], name
 
 
@@ -93,3 +98,33 @@ def test_role_names_the_backend_relies_on_are_valid_enum_free_text(insp):
     col = {c["name"]: c for c in insp.get_columns("roles")}["name"]
     length = getattr(col["type"], "length", None)
     assert length is None or all(len(r.value) <= length for r in Role)
+
+
+@pytest.mark.parametrize("table", B4_TABLES)
+def test_b4_unique_constraints_indexes_and_checks_match(insp, table):
+    """B4 mirrors also declare every unique constraint, index (incl. the partial unique
+    uq_active_assignment) and CHECK constraint of their table, by name: the services rely on
+    these names to turn database errors into clear API errors."""
+    t = Base.metadata.tables[table]
+    live_uq = {(u["name"], tuple(u["column_names"])) for u in insp.get_unique_constraints(table)}
+    orm_uq = {(u.name or f"{table}_{'_'.join(c.name for c in u.columns)}_key", tuple(c.name for c in u.columns))
+              for u in t.constraints if u.__class__.__name__ == "UniqueConstraint"}
+    orm_uq |= {(f"{table}_{c.name}_key", (c.name,)) for c in t.columns if c.unique}
+    assert live_uq == orm_uq, f"{table} unique: only in DB {sorted(live_uq - orm_uq)}, only in ORM {sorted(orm_uq - live_uq)}"
+
+    live_ix = {(i["name"], tuple(i["column_names"]), bool(i["unique"])) for i in insp.get_indexes(table)
+               if not i.get("duplicates_constraint")}
+    orm_ix = {(i.name, tuple(c.name for c in i.columns), bool(i.unique)) for i in t.indexes}
+    assert live_ix == orm_ix, f"{table} indexes: only in DB {sorted(live_ix - orm_ix)}, only in ORM {sorted(orm_ix - live_ix)}"
+
+    live_ck = {c["name"] for c in insp.get_check_constraints(table)}
+    orm_ck = {c.name for c in t.constraints if c.__class__.__name__ == "CheckConstraint"}
+    assert live_ck == orm_ck, f"{table} checks: only in DB {sorted(live_ck - orm_ck)}, only in ORM {sorted(orm_ck - live_ck)}"
+
+
+def test_active_assignment_index_is_partial_on_unassigned_rows(insp):
+    live = {i["name"]: i for i in insp.get_indexes("ticket_assignments")}["uq_active_assignment"]
+    where = (live.get("dialect_options") or {}).get("postgresql_where")
+    assert live["unique"] and where is not None and "unassigned_at IS NULL" in str(where)
+    orm = {i.name: i for i in Base.metadata.tables["ticket_assignments"].indexes}["uq_active_assignment"]
+    assert "unassigned_at IS NULL" in str(orm.dialect_options["postgresql"]["where"])

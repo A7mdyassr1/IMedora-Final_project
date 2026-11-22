@@ -141,6 +141,8 @@ def seed():
         with Session() as db:  # always runs, even after a failing test
             ids = created["users"]
             if ids:
+                # B4: tickets the temporary users reported (their audit rows go with the users' below)
+                db.execute(text("DELETE FROM maintenance_tickets WHERE reported_by = ANY(:u)"), {"u": ids})
                 db.execute(delete(AuditLog).where(AuditLog.user_id.in_(ids)))
                 db.execute(delete(User).where(User.id.in_(ids)))
             if created["department"]:
@@ -206,3 +208,48 @@ def test_seeded_placeholder_technician_cannot_log_in(seed):
     for attempt in ("not-a-real-hash", "", "password", PW):
         r = seed["client"].post(f"{API}/auth/login", json={"identifier": "mostafa.tech@cairomed.example", "password": attempt or "x"})
         assert r.status_code == 401 and r.json()["error"]["message"] == "Invalid email or password."
+
+
+# ---- B4 CP1: tickets on seeded data ------------------------------------------------------------
+def _seeded_ticket(seed):
+    with seed["Session"]() as db:
+        row = db.execute(text(
+            "SELECT id::text, problem_description, status::text FROM maintenance_tickets "
+            "WHERE hospital_id = :h AND deleted_at IS NULL AND reported_by NOT IN "
+            "(SELECT id FROM users WHERE email LIKE 'smoke-%@seedtest.invalid') ORDER BY created_at LIMIT 1"),
+            {"h": seed["hospital_id"]}).first()
+    if row is None:
+        pytest.skip("No seeded ticket in CMC-MAIN.")
+    return row
+
+
+def test_seeded_ticket_reads_through_the_api(seed):
+    """The seeded ticket has no '[Category]' prefix and no INSERT audit row: it must still read cleanly."""
+    c, h = seed["client"], seed["h"]
+    ticket_id, stored, status = _seeded_ticket(seed)
+    t = c.get(f"{API}/tickets/{ticket_id}", headers=h["tech"])
+    assert t.status_code == 200, t.text
+    body = t.json()
+    assert body["number"] == "TKT-" + ticket_id.replace("-", "")[:8].upper() and body["status"] == status
+    if not stored.startswith("["):
+        assert (body["category"], body["description"]) == ("Other", stored.strip())
+    assert body["timeline"][0]["kind"] == "created" and body["timeline"][-1]["status"] == status
+    assert ticket_id in {i["id"] for i in c.get(f"{API}/tickets", headers=h["tech"], params={"page_size": 100}).json()["items"]}
+    # not reported by them: invisible to department users and to other hospitals
+    assert c.get(f"{API}/tickets/{ticket_id}", headers=h["dept_icu"]).status_code == 404
+    assert c.get(f"{API}/tickets/{ticket_id}", headers=h["tech_other"]).status_code == 404
+
+
+def test_department_user_reports_on_a_seeded_device_of_another_department(seed):
+    c, h, d = seed["client"], seed["h"], seed["devices"]["DEV-002"]
+    r = c.post(f"{API}/tickets", headers=h["dept_icu"],
+               json={"device_id": str(d.id), "category": "Physical damage", "description": "Cracked housing"})
+    assert r.status_code == 201, r.text
+    t = r.json()
+    assert t["device"]["device_code"] == "DEV-002" and t["status"] == "open"
+    assert [i["id"] for i in c.get(f"{API}/tickets/mine", headers=h["dept_icu"]).json()["items"]] == [t["id"]]
+    assert c.get(f"{API}/tickets/{t['id']}", headers=h["tech"]).status_code == 200
+    assert c.get(f"{API}/tickets/{t['id']}", headers=h["tech_other"]).status_code == 404
+    r = c.post(f"{API}/tickets", headers=h["dept_none"],
+               json={"device_id": str(d.id), "category": "Other", "description": "x"})
+    assert r.status_code == 403 and r.json()["error"]["code"] == "department_required"

@@ -6,11 +6,14 @@ from app.models.department import Department
 from app.models.device import Device
 from app.models.hospital import Hospital
 from app.models.location import Location
+from app.models.maintenance import MaintenanceRecord, MaintenanceSchedule, MaintenanceType
 from app.models.organization import Organization
 from app.models.role import Role
+from app.models.ticket import MaintenanceTicket, TicketAssignment
 from app.models.user import User
 
 __all__ = [
     "AuditLog", "Base", "Department", "Device", "DeviceCategory", "DeviceModel", "Hospital",
-    "Location", "Manufacturer", "Organization", "Role", "User",
+    "Location", "MaintenanceRecord", "MaintenanceSchedule", "MaintenanceTicket", "MaintenanceType", "Manufacturer",
+    "Organization", "Role", "TicketAssignment", "User",
 ]

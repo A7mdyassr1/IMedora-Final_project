@@ -15,7 +15,18 @@ by `get_current_user` - never from query parameters or request bodies.
 
 QR exception (approved): a department user may look a device up by QR anywhere in their OWN
 hospital, but outside their own department they only get the limited summary (see
-DeviceService.get_by_qr). Problem reporting through QR arrives with the B4 ticket APIs.
+DeviceService.get_by_qr). Reporting a problem (B4) uses the same hospital-wide scope, so a
+department user can report on any device they can scan (AccessScope.reporting_scope).
+
+Maintenance tickets (B4, approved decisions Q3/Q9/Q11):
+
+    role                 tickets visible                               staff shown as
+    -------------------  --------------------------------------------  --------------
+    admin                whole organization (+ deleted, admin only)    names
+    biomedical_engineer  own hospital, plus tickets they reported      names
+    technician           own hospital, plus tickets they reported      names
+    department_user      only tickets they reported (with or without   role only
+                         a department)
 
 Out-of-scope records are reported as 404 by the callers, exactly like records that do not
 exist, so the API never reveals that they exist.
@@ -34,6 +45,12 @@ from app.core.roles import Role
 class DepartmentRequiredError(ForbiddenError):
     code = "department_required"
     default_message = "An administrator must assign you to a department before you can access devices."
+
+
+class TicketAccess(StrEnum):
+    ORGANIZATION = "organization"
+    HOSPITAL = "hospital"        # own hospital's tickets + the user's own reports
+    OWN_REPORTS = "own_reports"  # department_user: only the tickets they reported
 
 
 class DeviceAccess(StrEnum):
@@ -86,6 +103,29 @@ class AccessScope:
         if self.device_access is DeviceAccess.DEPARTMENT:
             return device_department_id == self.department_id
         return self.device_access is not DeviceAccess.NONE
+
+    # ---- maintenance tickets (B4) ------------------------------------------------------------
+    def reporting_scope(self) -> "AccessScope":
+        """Scope of the devices the caller may REPORT A PROBLEM on: the QR scope, i.e. their own
+        hospital for department users (incl. other departments: the approved QR exception), own
+        hospital for engineers/technicians, the organization for admins. A department user without
+        a department gets 403 department_required (no problem reporting, approved condition)."""
+        return self.qr_lookup_scope()
+
+    @property
+    def ticket_access(self) -> TicketAccess:
+        """Which tickets the caller may read. Independent of device access on purpose: a department
+        user who loses their department keeps read access to their own reports (Q11)."""
+        if self.is_admin:
+            return TicketAccess.ORGANIZATION
+        if self.role is Role.DEPARTMENT_USER:
+            return TicketAccess.OWN_REPORTS
+        return TicketAccess.HOSPITAL
+
+    @property
+    def sees_staff_names(self) -> bool:
+        """Department users see staff as role descriptions ("Technician"), never names (Q9)."""
+        return self.role is not Role.DEPARTMENT_USER
 
     # ---- organization structure (hospitals, departments, locations) ------------------------
     @property

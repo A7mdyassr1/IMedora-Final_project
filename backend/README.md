@@ -114,6 +114,40 @@ DATABASE_URL=postgresql+psycopg2://<user>:<pw>@localhost:5432/imedora_seedtest p
 cd backend && TEST_SEED_DATABASE_URL=postgresql+psycopg2://<user>:<pw>@localhost:5432/imedora_seedtest pytest -q tests/test_seed_smoke.py
 ```
 
+## Tickets (B4 CP1)
+
+| Endpoint | Who | Notes |
+|---|---|---|
+| `POST /api/v1/tickets` | everyone | Report a problem: `{device_id, category, description, priority?}` |
+| `GET /api/v1/tickets` | everyone, scoped | Filters: `status`, `priority` (both repeatable), `hospital_id`, `department_id`, `device_id`, `reported_by`, `assigned_to` (`me` or an id), `created_from`, `created_to`, `q`, `include_deleted` (admins only). Sort: `created_at` (default, newest first), `updated_at`, `priority`, `status` |
+| `GET /api/v1/tickets/mine` | everyone | Tickets the caller reported, newest first |
+| `GET /api/v1/tickets/{id}` | everyone, scoped | Ticket plus its derived `timeline` |
+| `GET /api/v1/devices/{id}/tickets` | device scope, then ticket scope | A device's ticket history |
+
+**Which tickets a user sees** (out of scope is 404):
+
+| Role | Tickets |
+|---|---|
+| admin | whole organization; soft-deleted tickets only with `include_deleted=true` |
+| biomedical_engineer, technician | own hospital, plus tickets they reported |
+| department_user | only tickets they reported, even after losing their department |
+
+**Reporting a problem:**
+
+- Every role can report, on any device of its own hospital. That includes another department's device scanned by QR, for department users; admins can report anywhere in the organization.
+- A department user without a department gets 403 `department_required`.
+- Archived devices and devices in inactive hospitals are refused with 400.
+- The server sets the organization, hospital, reporter and `status=open`.
+
+**Response fields:**
+
+- `category` is one of `Device not working`, `Abnormal reading`, `Physical damage`, `Alarm/problem`, `Power issue`, `Other`. It is stored as a `[Category] ` prefix of `problem_description`, parsed exactly like the mobile app does; text without a known prefix reads as `Other`.
+- `number` is `TKT-XXXXXXXX`, derived from the id and display-only.
+- `device` holds identifying fields only.
+- For department users, staff appear as a role (`"name": "Technician"`, `"id": null`).
+
+**Timeline:** it is derived from the ticket's audit rows (created, status, priority, deletion) and is never stored. Assignment events arrive in B4 CP2, and work performed in CP3.
+
 ## Planned API Domains
 
 - Authentication
@@ -134,7 +168,7 @@ cd backend && TEST_SEED_DATABASE_URL=postgresql+psycopg2://<user>:<pw>@localhost
 - **B1 (foundation) done:** app factory, settings, PostgreSQL connection, health endpoints, error handling, logging, CORS, `/api/v1`.
 - **B2 (auth) done:** login (Argon2 + JWT), `/auth/me`, change password, role-based access (`require_roles`), admin user management (`/users`), organization-scoped.
 - **B3 (device management) done:** organization, hospitals, departments, locations, device categories / manufacturers / models, devices (search, filters, sorting, pagination, archive) and QR lookup `GET /devices/qr/{qr_identifier}`. Database constraint errors are translated centrally in `app/core/db_errors.py`.
-- **B3.1 (hardening) in progress.**
+- **B3.1 (hardening):**
   - **Checkpoint 1:** `backend/.env.example`; 8-hour default token lifetime; exact dependency pins; the QR lookup compares the indexed column directly, so the unique index is usable (the `upper()` fallback scan is removed); fixed the `safe_database_url` test.
   - **Checkpoint 2:**
     - **Audit log:** every change through the API or `scripts/create_user.py` writes an `audit_logs` row in the same transaction. Passwords, hashes and tokens are never stored.
@@ -147,4 +181,12 @@ cd backend && TEST_SEED_DATABASE_URL=postgresql+psycopg2://<user>:<pw>@localhost
     - `include_archived=true` is admin-only.
     - New tests: a schema-compatibility test and opt-in seed smoke tests.
     - The read-only token guard is deferred to the AI phase.
-- Next: B4 (maintenance: types, schedules, tickets, records, assignments). `GET /devices/{id}/history` is deferred until B4/B6 provide the data it shows.
+- **B3.1 done** (commit `c2aebbf`).
+- **B4 (tickets & maintenance) in progress** on `feature/backend-b4-jana`:
+  - **Checkpoint 1 (ticket core):**
+    - ORM mirrors of the five maintenance tables and the ticket enums.
+    - Report a problem, including on another department's device scanned by QR.
+    - Ticket lists, "my tickets", ticket detail with a derived timeline, and a device's ticket history.
+    - Visibility rules in `app/core/access.py`.
+  - Next: CP2 workflow and assignments, CP3 maintenance records and schedules, CP4 integration.
+  - `GET /devices/{id}/history` is deferred until B4/B6 provide the data it shows.

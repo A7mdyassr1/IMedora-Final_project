@@ -28,3 +28,23 @@ class AuditAction(StrEnum):
     INSERT = "insert"
     UPDATE = "update"
     DELETE = "delete"
+
+
+class TicketStatus(StrEnum):
+    """Mirror of the PostgreSQL `ticket_status` enum (migration 0002), in database order."""
+    OPEN = "open"
+    ASSIGNED = "assigned"
+    IN_PROGRESS = "in_progress"
+    WAITING_FOR_PARTS = "waiting_for_parts"
+    RESOLVED = "resolved"
+    CLOSED = "closed"
+    CANCELLED = "cancelled"
+
+
+class TicketPriority(StrEnum):
+    """Mirror of the PostgreSQL `ticket_priority` enum (migration 0002). Database order is
+    low < medium < high < critical, so ORDER BY priority sorts by urgency."""
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
