@@ -18,6 +18,9 @@ pydantic-settings==2.16.3
 python-dotenv==1.2.4
 argon2-cffi==25.1.0       # password hashing (Argon2id)
 PyJWT==2.15.1             # access tokens
+# B5 (attachments, Decision 5) - tested on Python 3.11 / 3.12 / 3.13; win_amd64 wheels exist for each
+python-multipart==0.0.34  # multipart/form-data parsing for photo uploads (FastAPI UploadFile)
+Pillow==13.0.0            # checks JPEG / PNG from the content and removes EXIF / GPS metadata
 
 # testing
 pytest==8.4.2

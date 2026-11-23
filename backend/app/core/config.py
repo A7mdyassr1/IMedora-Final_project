@@ -48,6 +48,14 @@ class Settings(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     log_json: bool = True
 
+    # Attachments (B5, Decision 5). Files are private: they are served only through the API.
+    # "local" is the only backend today; S3-compatible storage can be added behind the same
+    # interface (app/storage) without changing business logic.
+    storage_backend: Literal["local"] = "local"
+    # Back this directory up together with the database. Git-ignored when left at the default.
+    storage_dir: Path = REPO_ROOT / "storage" / "attachments"
+    max_upload_mb: int = Field(default=5, ge=1, le=50)
+
     @field_validator("log_level", mode="before")
     @classmethod
     def _upper_log_level(cls, value):
@@ -66,6 +74,10 @@ class Settings(BaseSettings):
         if len(value.get_secret_value()) < 32:
             raise ValueError("JWT_SECRET_KEY must be at least 32 characters (see .env.example)")
         return value
+
+    @property
+    def max_upload_bytes(self) -> int:
+        return self.max_upload_mb * 1024 * 1024
 
     @property
     def cors_origins_list(self) -> List[str]:

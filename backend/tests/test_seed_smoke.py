@@ -294,7 +294,20 @@ def test_seeded_parts_stock_and_usage_read_through_the_api(seed):
     assert c.get(f"{API}/inventory", headers=h["dept_icu"]).status_code == 403
 
 
-# ---- B5: notifications on seeded data (read-only) --------------------------------------
+# ---- B5: attachments and notifications on seeded data (read-only) --------------------------------------
+def test_seeded_attachment_is_listed_but_its_external_url_is_never_fetched(seed):
+    """The seeded attachment row points at an external URL (pre-B5 data). It is listed on its ticket,
+    but the API serves only files it stored itself: 404, no redirect, the URL is not revealed."""
+    c, h = seed["client"], seed["h"]
+    ticket_id, _, _ = _seeded_ticket(seed)
+    attachments = c.get(f"{API}/tickets/{ticket_id}", headers=h["tech"]).json()["attachments"]
+    seeded = [a for a in attachments if a["file_name"] == "pressure-gauge.jpg"]
+    assert len(seeded) == 1 and seeded[0]["file_url"] == f"/api/v1/attachments/{seeded[0]['id']}"
+    r = c.get(seeded[0]["file_url"], headers=h["tech"], follow_redirects=False)
+    assert r.status_code == 404 and "example.com" not in r.text
+    assert c.get(seeded[0]["file_url"], headers=h["tech_other"]).status_code == 404
+
+
 def test_seeded_notifications_stay_private(seed):
     """Seeded notifications belong to the seeded technician: no other user sees them."""
     c, h = seed["client"], seed["h"]

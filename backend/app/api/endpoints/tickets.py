@@ -9,19 +9,21 @@ import uuid
 from datetime import datetime, timezone
 from typing import List, Literal, Optional
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, File, Query, Response, UploadFile
 from sqlalchemy.orm import Session
 
 from app.api.deps import AdminOnly, CurrentUser, Pagination, pagination_params
 from app.core.access import scope_for
+from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.enums import TicketPriority, TicketStatus
 from app.models.user import User
 from app.repositories.ticket_repository import TicketFilters
 from app.schemas.common import Page
 from app.schemas.ticket import (
-    AssignmentCreate, TicketCreate, TicketDetailResponse, TicketResponse, TicketStatusUpdate, TicketUpdate,
+    AssignmentCreate, AttachmentResponse, TicketCreate, TicketDetailResponse, TicketResponse, TicketStatusUpdate, TicketUpdate,
 )
+from app.services.attachment_service import AttachmentService
 from app.services.ticket_service import TicketService
 
 router = APIRouter(tags=["tickets"])
@@ -69,7 +71,7 @@ def create_ticket(body: TicketCreate, user: User = CurrentUser, db: Session = De
     scope = scope_for(user)
     service = TicketService(db)
     ticket = service.create(scope, body)
-    return TicketDetailResponse.build_detail(ticket, scope, service.timeline(scope, ticket))
+    return _detail(service, ticket, scope)
 
 
 @router.get("/tickets", response_model=Page[TicketResponse], summary="List / search / filter tickets")
@@ -111,7 +113,7 @@ def get_ticket(ticket_id: uuid.UUID, user: User = CurrentUser, db: Session = Dep
     scope = scope_for(user)
     service = TicketService(db)
     ticket = service.get(scope, ticket_id)
-    return TicketDetailResponse.build_detail(ticket, scope, service.timeline(scope, ticket))
+    return _detail(service, ticket, scope)
 
 
 @router.get(
@@ -138,7 +140,8 @@ def device_tickets(
 
 # ---- workflow (CP2) ----------------------------------------------------------------------------
 def _detail(service: TicketService, ticket, scope) -> TicketDetailResponse:
-    return TicketDetailResponse.build_detail(ticket, scope, service.timeline(scope, ticket))
+    attachments = AttachmentService(service.db).ticket_attachments(ticket)  # B5: photos, oldest first
+    return TicketDetailResponse.build_detail(ticket, scope, service.timeline(scope, ticket), attachments)
 
 
 @router.patch(
@@ -201,3 +204,29 @@ def update_ticket(ticket_id: uuid.UUID, body: TicketUpdate, user: User = Current
 def delete_ticket(ticket_id: uuid.UUID, user: User = AdminOnly, db: Session = Depends(get_db)):
     TicketService(db).soft_delete(scope_for(user), ticket_id)
     return Response(status_code=204)
+
+
+# ---- attachments (B5, Decision 5) ----------------------------------------------------------------
+@router.post(
+    "/tickets/{ticket_id}/attachments", response_model=AttachmentResponse, status_code=201,
+    summary="Add a photo to a ticket",
+    description=(
+        "multipart/form-data with one `file`. JPEG or PNG only, recognised from the content (415 "
+        "`unsupported_file`); at most MAX_UPLOAD_MB (413 `file_too_large`); at most 3 per ticket (409 "
+        "`attachment_limit_reached`). Location (GPS) and other EXIF / XMP / text metadata are removed. "
+        "The reporter, the assigned staff, the hospital's engineers and administrators; not on closed, "
+        "cancelled or deleted tickets."
+    ),
+)
+def upload_attachment(ticket_id: uuid.UUID, file: UploadFile = File(...), user: User = CurrentUser,
+                      db: Session = Depends(get_db)):
+    data = file.file.read(get_settings().max_upload_bytes + 1)  # never more than the limit + 1 byte in memory
+    scope = scope_for(user)
+    return AttachmentResponse.build(AttachmentService(db).upload(scope, ticket_id, file.filename, data), scope)
+
+
+@router.get("/tickets/{ticket_id}/attachments", response_model=List[AttachmentResponse],
+            summary="A ticket's photos (oldest first)")
+def list_attachments(ticket_id: uuid.UUID, user: User = CurrentUser, db: Session = Depends(get_db)):
+    scope = scope_for(user)
+    return [AttachmentResponse.build(a, scope) for a in AttachmentService(db).for_ticket(scope, ticket_id)]

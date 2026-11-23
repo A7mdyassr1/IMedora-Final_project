@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 .venv/
 *.egg-info/
+# Uploaded attachments (backend STORAGE_DIR default): private files, never committed
+/storage/

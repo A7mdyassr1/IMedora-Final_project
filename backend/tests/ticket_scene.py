@@ -66,6 +66,9 @@ def tickets(scene, client):
 
     with get_session_factory()() as db:
         orgs = [uuid.UUID(world["org"]), uuid.UUID(world["other"])]
+        # B5: attachments first (they RESTRICT tickets, records, devices and users); their files live in
+        # the session's temporary STORAGE_DIR (tests/conftest.py)
+        db.execute(text("DELETE FROM attachments WHERE organization_id = ANY(:o)"), {"o": orgs})
         # B5: parts usage goes with its records (ON DELETE CASCADE; the trigger gives the stock back)
         for table in ("maintenance_records", "maintenance_schedules", "maintenance_tickets"):
             db.execute(text(f"DELETE FROM {table} WHERE organization_id = ANY(:o)"), {"o": orgs})

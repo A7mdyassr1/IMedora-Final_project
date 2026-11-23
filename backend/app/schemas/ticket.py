@@ -148,10 +148,30 @@ class TicketResponse(TicketNumberMixin):
         )
 
 
-class TicketDetailResponse(TicketResponse):
-    timeline: List[TicketTimelineItem] = Field(description="Derived history, oldest first.")
+class AttachmentResponse(BaseModel):
+    """A ticket photo (B5). The mobile app's TicketAttachment shows `file_name` and opens `file_url`,
+    which is the API download address (Bearer token required) - never a storage location."""
+    id: uuid.UUID
+    file_name: Optional[str] = None
+    mime_type: Optional[str] = None
+    file_size_bytes: Optional[int] = None
+    file_url: str = Field(description="API path that serves the file to authorised users.")
+    uploaded_by: PersonRef
+    created_at: datetime
 
     @classmethod
-    def build_detail(cls, t: "MaintenanceTicket", scope: "AccessScope", timeline: List[TimelineItem]) -> "TicketDetailResponse":
+    def build(cls, a, scope: "AccessScope") -> "AttachmentResponse":
+        return cls(id=a.id, file_name=a.file_name, mime_type=a.mime_type, file_size_bytes=a.file_size_bytes,
+                   file_url=f"/api/v1/attachments/{a.id}", uploaded_by=_person(a.uploader, scope),
+                   created_at=a.created_at)
+
+
+class TicketDetailResponse(TicketResponse):
+    timeline: List[TicketTimelineItem] = Field(description="Derived history, oldest first.")
+    attachments: List[AttachmentResponse] = Field(default_factory=list, description="Photos, oldest first (B5).")
+
+    @classmethod
+    def build_detail(cls, t: "MaintenanceTicket", scope: "AccessScope", timeline: List[TimelineItem],
+                     attachments=()) -> "TicketDetailResponse":
         items = [TicketTimelineItem(at=i.at, kind=i.kind, status=i.status, message=i.message, actor=i.actor) for i in timeline]
-        return cls.build(t, scope, timeline=items)
+        return cls.build(t, scope, timeline=items, attachments=[AttachmentResponse.build(a, scope) for a in attachments])

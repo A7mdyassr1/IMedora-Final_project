@@ -12,8 +12,14 @@ forced BEFORE the app is imported:
 B1 tests only run SELECTs, but later phases will write data, so point
 TEST_DATABASE_URL at a throwaway database (e.g. imedora_test), never
 your dev data.
+
+B5: uploaded attachments go to a temporary STORAGE_DIR created for this test session and
+removed at its end - never to the real storage folder.
 """
+import atexit
 import os
+import shutil
+import tempfile
 from pathlib import Path
 from sqlalchemy.engine import make_url
 
@@ -47,6 +53,9 @@ os.environ["DATABASE_URL"] = TEST_DATABASE_URL or "postgresql+psycopg2://test:te
 os.environ["APP_ENV"] = "test"
 os.environ["JWT_SECRET_KEY"] = "test-only-secret-key-not-used-anywhere-else-0123456789"
 os.environ["LOG_JSON"] = "false"
+_STORAGE = tempfile.mkdtemp(prefix="imedora-test-attachments-")
+os.environ["STORAGE_DIR"] = _STORAGE
+atexit.register(shutil.rmtree, _STORAGE, ignore_errors=True)
 
 from fastapi.testclient import TestClient  # noqa: E402
 
