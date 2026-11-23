@@ -42,7 +42,8 @@ from app.repositories.device_repository import DeviceRepository
 from app.repositories.ticket_repository import TicketFilters, TicketRepository
 from app.schemas.ticket import TicketCreate
 from app.services.audit_service import AuditService, snapshot
-from app.services.ticket_timeline import AssignmentEntry, AuditEntry, Person, TimelineItem, build_timeline
+from app.repositories.maintenance_repository import MaintenanceRepository
+from app.services.ticket_timeline import AssignmentEntry, AuditEntry, Person, TimelineItem, WorkEntry, build_timeline
 from app.utils.problem_category import compose
 
 logger = logging.getLogger(__name__)
@@ -120,8 +121,9 @@ class TicketService:
                 unassigned_by[r.record_id] = r.user_id
         assignments = [AssignmentEntry(a.user_id, a.assigned_at, a.unassigned_at, assigned_by.get(a.id), unassigned_by.get(a.id))
                        for a in ticket.assignments]
+        work = [WorkEntry(at, by, text) for at, by, text in MaintenanceRepository(self.db).work_for_ticket(ticket.id, ticket.device_id)]
         people_ids = [ticket.reported_by, *(r.user_id for r in rows), *(a.user_id for a in ticket.assignments),
-                      *assigned_by.values(), *unassigned_by.values()]
+                      *assigned_by.values(), *unassigned_by.values(), *(w.user_id for w in work)]
         users = self.tickets.users_by_id(ticket.organization_id, people_ids)
         return build_timeline(
             ticket_created_at=ticket.created_at,
@@ -131,6 +133,7 @@ class TicketService:
             viewer_id=scope.user_id,
             viewer_sees_names=scope.sees_staff_names,
             assignments=assignments,
+            work=work,
         )
 
     # ---- workflow (CP2) ------------------------------------------------------------------------

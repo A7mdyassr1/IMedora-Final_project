@@ -1,7 +1,7 @@
 """Maintenance types, schedules and records (B4) - exact mirrors of migration 0002.
 
 Mapped in B4 CP1 together with the ticket tables so the whole maintenance schema is verified
-against the live database at once; their services and endpoints arrive in B4 CP3.
+against the live database at once; services and endpoints: B4 CP3 (app/services/maintenance_service.py).
 
 Database rules these mirrors declare (enforced by PostgreSQL, not re-implemented here):
 - A record's ticket must belong to the same device (fk_record_ticket_same_device).
@@ -21,9 +21,11 @@ from sqlalchemy import (
     String, Text, UniqueConstraint, func, text,
 )
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
+from app.models.device import Device
+from app.models.user import User
 
 
 class MaintenanceType(Base):
@@ -57,6 +59,10 @@ class MaintenanceSchedule(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, server_default=text("true"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), server_onupdate=FetchedValue())
+
+    # selectin (as for tickets): one extra SELECT per page, never per row, and no joins in paged queries
+    device: Mapped[Device] = relationship(lazy="selectin")
+    maintenance_type: Mapped[MaintenanceType] = relationship(lazy="selectin")
 
 
 class MaintenanceRecord(Base):
@@ -94,3 +100,7 @@ class MaintenanceRecord(Base):
     performed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), server_onupdate=FetchedValue())
+
+    device: Mapped[Device] = relationship(lazy="selectin")
+    maintenance_type: Mapped[MaintenanceType] = relationship(lazy="selectin")
+    performer: Mapped[User] = relationship(lazy="selectin", foreign_keys=[performed_by])

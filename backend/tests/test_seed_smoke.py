@@ -253,3 +253,20 @@ def test_department_user_reports_on_a_seeded_device_of_another_department(seed):
     r = c.post(f"{API}/tickets", headers=h["dept_none"],
                json={"device_id": str(d.id), "category": "Other", "description": "x"})
     assert r.status_code == 403 and r.json()["error"]["code"] == "department_required"
+
+
+# ---- B4 CP3: maintenance on seeded data (read-only) -----------------------------------------------
+def test_seeded_maintenance_data_reads_through_the_api(seed):
+    """The seeded types, schedule and records are readable by staff and consistent with the device's
+    next maintenance date; department users have no access. Nothing is written."""
+    c, h, dev = seed["client"], seed["h"], seed["devices"]["DEV-001"]
+    names = {t["name"] for t in c.get(f"{API}/maintenance-types", headers=h["tech"]).json()}
+    assert {"preventive", "corrective"} <= names
+    schedules = c.get(f"{API}/devices/{dev.id}/maintenance-schedules", headers=h["tech"]).json()["items"]
+    records = c.get(f"{API}/devices/{dev.id}/maintenance-records", headers=h["tech"]).json()
+    device = c.get(f"{API}/devices/{dev.id}", headers=h["tech"]).json()
+    active = [s["next_due_date"] for s in schedules if s["is_active"]]
+    assert device["next_maintenance_due_date"] == (min(active) if active else None)
+    assert records["total"] >= 1 and all(r["device"]["device_code"] == "DEV-001" for r in records["items"])
+    assert c.get(f"{API}/devices/{dev.id}/maintenance-records", headers=h["dept_icu"]).status_code == 403
+    assert c.get(f"{API}/devices/{dev.id}/maintenance-records", headers=h["tech_other"]).status_code == 404

@@ -21,11 +21,17 @@ CONSTRAINT_MESSAGES = {
     "uq_device_model_manufacturer_name": "This manufacturer already has a model with this name.",
     "users_email_key": "A user with this email already exists.",
     "uq_active_assignment": "This user is already assigned to this ticket.",
+    "uq_schedule_device_type": "This device already has a schedule for this maintenance type.",
+    "maintenance_types_name_key": "A maintenance type with this name already exists.",
     # check
     "ck_device_warranty_after_installation": "Warranty expiry cannot be before the installation date.",
     "ck_ticket_resolved_status_has_timestamp": "A resolved or closed ticket must have a resolution time.",
     "ck_ticket_resolved_after_created": "A ticket cannot be resolved before it was created.",
     "ck_assignment_unassigned_after_assigned": "An assignment cannot end before it started.",
+    "ck_schedule_frequency_positive": "The maintenance frequency must be at least one day.",
+    # composite foreign keys of maintenance records (B4 CP3; the service checks these first)
+    "fk_record_ticket_same_device": "The ticket belongs to another device.",
+    "fk_record_schedule_same_device_and_type": "The schedule belongs to another device or maintenance type.",
     # restrict foreign keys (delete blocked because something still points at the row)
     "devices_department_id_fkey": "This department still has devices assigned to it.",
     "devices_device_model_id_fkey": "This model is still used by devices.",

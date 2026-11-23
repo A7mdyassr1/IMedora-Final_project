@@ -3,8 +3,8 @@
 There is no ticket-updates table (schema frozen). The history shown by GET /tickets/{id} is built
 from the audit rows the backend writes for every ticket change (audit_logs, table_name =
 'maintenance_tickets', record_id = ticket id), from ticket_assignments (B4 CP2: who was assigned
-when, and - through the assignments' own audit rows - by whom), and, from CP3, from linked
-maintenance records.
+when, and - through the assignments' own audit rows - by whom), and from the maintenance
+records linked to the ticket (CP3: the work performed, by whom, when).
 
 This module is PURE: no database access. The service loads the rows and the people involved and
 passes them in, so every rule here is unit-tested without PostgreSQL.
@@ -17,12 +17,15 @@ Rules:
   that column. Other columns are not timeline events.
 - "assigned" / "unassigned" (CP2): from ticket_assignments.assigned_at / unassigned_at. The actor
   is taken from the assignment's audit row when there is one (seeded assignments have none).
+- "work_performed" (CP3): each linked maintenance record, at its performed_at, with its
+  description; the performer is the actor. Department users see the description on their own
+  tickets (decision Q9) and the performer as a role.
 - The automatic status change that an (un)assignment causes in the same transaction
   (open -> assigned, assigned -> open) is FOLDED into that assignment event: one entry
   "Assigned to Technician." with status "assigned", not two entries.
 - Every item carries the ticket status AFTER that event (the mobile app colours items by it).
-- Items are ordered by time; at the same instant: created, then (un)assignments, then ticket
-  changes; events of one audit row keep the order above.
+- Items are ordered by time; at the same instant: created, then (un)assignments, then work,
+  then ticket changes; events of one audit row keep the order above.
 - Actors: staff see names. Department users see other people as a role description
   ("Technician", ...), never a name (approved decision Q9); their own actions show their name.
 """
@@ -55,7 +58,7 @@ ROLE_LABELS = {
     "department_user": "Department staff",
 }
 
-TimelineKind = Literal["created", "assigned", "unassigned", "status_changed", "priority_changed", "deleted"]
+TimelineKind = Literal["created", "assigned", "unassigned", "work_performed", "status_changed", "priority_changed", "deleted"]
 
 
 @dataclass(frozen=True)
@@ -74,6 +77,13 @@ class AssignmentEntry:
     unassigned_at: Optional[datetime] = None
     assigned_by: Optional[uuid.UUID] = None     # from the assignment's INSERT audit row
     unassigned_by: Optional[uuid.UUID] = None   # from its UPDATE (unassigned_at) audit row
+
+
+@dataclass(frozen=True)
+class WorkEntry:
+    at: datetime                     # maintenance_records.performed_at
+    user_id: uuid.UUID               # performed_by
+    description: str
 
 
 @dataclass(frozen=True)
@@ -139,6 +149,7 @@ def build_timeline(
     viewer_id: uuid.UUID,
     viewer_sees_names: bool,
     assignments: Iterable[AssignmentEntry] = (),
+    work: Iterable[WorkEntry] = (),
 ) -> List[TimelineItem]:
     def actor(user_id: Optional[uuid.UUID]) -> Optional[str]:
         return person_display(people.get(user_id) if user_id else None, viewer_id, viewer_sees_names)
@@ -161,9 +172,11 @@ def build_timeline(
         events.append((a.assigned_at, 1, "assigned", a))
         if a.unassigned_at is not None:
             events.append((a.unassigned_at, 1, "unassigned", a))
+    for w in work:
+        events.append((w.at, 2, "work", w))
     for e in rows:
         if e.action == "update":
-            events.append((e.at, 2, "update", e))
+            events.append((e.at, 3, "update", e))
     events.sort(key=lambda ev: (ev[0], ev[1]))  # stable
 
     items: List[TimelineItem] = []
@@ -175,6 +188,8 @@ def build_timeline(
             items.append(TimelineItem(at, "assigned", status, f"Assigned to {named(data.user_id)}.", actor(data.assigned_by)))
         elif kind == "unassigned":
             items.append(TimelineItem(at, "unassigned", status, f"{named(data.user_id)} unassigned.", actor(data.unassigned_by)))
+        elif kind == "work":
+            items.append(TimelineItem(at, "work_performed", status, f"Work performed: {data.description}", actor(data.user_id)))
         else:
             new, old, who = data.new_values or {}, data.old_values or {}, actor(data.user_id)
             if "status" in new:

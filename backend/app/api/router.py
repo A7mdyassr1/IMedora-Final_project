@@ -4,7 +4,7 @@
 """
 from fastapi import APIRouter
 
-from app.api.endpoints import auth, catalog, devices, health, structure, tickets, users
+from app.api.endpoints import auth, catalog, devices, health, maintenance, structure, tickets, users
 
 api_v1_router = APIRouter()
 
@@ -22,3 +22,4 @@ api_v1_router.include_router(catalog.manufacturer_router)
 api_v1_router.include_router(catalog.model_router)
 api_v1_router.include_router(devices.router)
 api_v1_router.include_router(tickets.router)
+api_v1_router.include_router(maintenance.router)

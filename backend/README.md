@@ -146,7 +146,7 @@ cd backend && TEST_SEED_DATABASE_URL=postgresql+psycopg2://<user>:<pw>@localhost
 - `device` holds identifying fields only.
 - For department users, staff appear as a role (`"name": "Technician"`, `"id": null`).
 
-**Timeline:** it is derived from the ticket's audit rows (created, status, priority, deletion) and from `ticket_assignments` (assigned, unassigned), and is never stored. The automatic status change caused by an assignment is folded into that one entry. Work performed arrives in CP3.
+**Timeline:** it is derived from the ticket's audit rows (created, status, priority, deletion) and from `ticket_assignments` (assigned, unassigned), and is never stored. The automatic status change caused by an assignment is folded into that one entry. Work performed (maintenance records linked to the ticket) appears as `work_performed` entries.
 
 ### Ticket workflow (B4 CP2)
 
@@ -180,6 +180,41 @@ cd backend && TEST_SEED_DATABASE_URL=postgresql+psycopg2://<user>:<pw>@localhost
   - visible but not allowed → 403;
   - transition not in the table → 409 `invalid_status_transition`, with `details: [{from, to, allowed}]`;
   - deleted ticket → 409.
+
+### Maintenance (B4 CP3)
+
+Staff only: technicians, biomedical engineers, administrators. Department users get 403; they see the work done on their own tickets in the ticket timeline. Everything is scoped to the caller's hospital (admins: the organization), and out of scope is 404.
+
+| Endpoint | Who | Notes |
+|---|---|---|
+| `GET /api/v1/maintenance-types` | staff | e.g. `preventive`, `corrective` (global reference data) |
+| `POST /api/v1/maintenance-types` `{name}` | admin | Trimmed and lower-cased. **Migrations create no types, so a new production database needs at least one before records or schedules can be created** |
+| `POST /api/v1/maintenance-records` | staff | `{device_id, maintenance_type_id, description, performed_at?, ticket_id?, schedule_id?}`; the performer is the caller |
+| `GET /api/v1/maintenance-records`, `GET …/{id}` | staff | Filters: `device_id`, `hospital_id`, `department_id`, `maintenance_type_id`, `performed_by`, `ticket_id`, `schedule_id`, `performed_from`, `performed_to` |
+| `PATCH /api/v1/maintenance-records/{id}` | engineer (own hospital), admin | Corrections: `description`, and `performed_at` unless a schedule depends on it. Records are never deleted |
+| `GET /api/v1/devices/{id}/maintenance-records` | staff | A device's history, newest first; archived devices included |
+| `POST /api/v1/maintenance-schedules` | engineer (own hospital), admin | `{device_id, maintenance_type_id, frequency_days (1–3650), next_due_date}`; one per device and type |
+| `PATCH /api/v1/maintenance-schedules/{id}` | engineer (own hospital), admin | `frequency_days`, `next_due_date`, `is_active`. Schedules are deactivated, never deleted |
+| `GET /api/v1/maintenance-schedules`, `GET …/{id}` | staff | Due list: active schedules of non-archived devices, soonest first. Filters: `due_before`, `overdue=true`, `department_id`, `maintenance_type_id`, `include_inactive` |
+| `GET /api/v1/devices/{id}/maintenance-schedules` | staff | All of a device's schedules |
+
+**Record rules:**
+- No new records or schedules on archived devices or in inactive hospitals.
+- `performed_at` cannot be in the future.
+- **Linked to a ticket** (`ticket_id`):
+  - the ticket must be on the same device, and not deleted, closed or cancelled;
+  - technicians must be assigned to it;
+  - the work cannot be dated before the ticket was reported.
+  - This record is what allows the ticket to be **resolved**, and it appears in the ticket timeline as `work_performed`.
+- **Linked to a schedule** (`schedule_id`, same device and type, active):
+  - it sets `last_performed_date` to the work date and `next_due_date` to the work date + `frequency_days`;
+  - a backdated record never moves a schedule backwards.
+
+**`devices.next_maintenance_due_date`:**
+- It is the earliest `next_due_date` of the device's **active** schedules, or empty when there are none.
+- It is recomputed in the same transaction as every schedule change, and audited when it changes.
+- The device row is locked while this happens, so concurrent changes cannot leave a stale date.
+- Dates come from the database's time zone.
 
 ## Planned API Domains
 
@@ -222,5 +257,6 @@ cd backend && TEST_SEED_DATABASE_URL=postgresql+psycopg2://<user>:<pw>@localhost
     - Ticket lists, "my tickets", ticket detail with a derived timeline, and a device's ticket history.
     - Visibility rules in `app/core/access.py`.
   - **Checkpoint 2 (workflow):** status transitions, assignments, priority, admin soft delete, row locking, timeline v2.
-  - Next: CP3 maintenance records and schedules, CP4 integration.
+  - **Checkpoint 3 (maintenance):** maintenance types, records and schedules; `next_maintenance_due_date`; work-performed events in the ticket timeline; tickets resolvable through the API alone.
+  - Next: CP4 integration and sign-off.
   - `GET /devices/{id}/history` is deferred until B4/B6 provide the data it shows.

@@ -73,9 +73,11 @@ def test_full_lifecycle_report_assign_work_resolve_close(client, tickets):
     assert r.json()["assignees"][0]["id"] == w["tech_id"]  # assignments stay as history
 
     staff = [(i["kind"], i["status"]) for i in r.json()["timeline"]]
+    # B4 CP3 (timeline v3): the linked maintenance record now appears as "work_performed"
     assert staff == [("created", "open"), ("assigned", "assigned"), ("status_changed", "in_progress"),
                      ("status_changed", "waiting_for_parts"), ("status_changed", "in_progress"),
-                     ("status_changed", "resolved"), ("status_changed", "closed")]
+                     ("work_performed", "in_progress"), ("status_changed", "resolved"), ("status_changed", "closed")]
+    assert r.json()["timeline"][5]["message"] == "Work performed: Replaced the power supply"
     # Q8: the device's status is never changed by the ticket workflow
     assert client.get(f"{API}/devices/{tickets['d']['icu']['id']}", headers=h["admin"]).json()["status"] == device_before
     # the reporter follows it all - with roles instead of staff names (Q9)

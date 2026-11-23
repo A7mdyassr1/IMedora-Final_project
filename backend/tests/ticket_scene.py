@@ -3,8 +3,8 @@
 `tickets` depends on `scene`, so pytest tears it down BEFORE `scene`'s fixtures (`cat` removes
 devices, `world` removes users and audit rows). It deletes, bottom-up and only for the test's two
 organizations, every maintenance row the test created: records and schedules (RESTRICT devices
-and tickets), then tickets (their assignments cascade), then the test's own maintenance type
-(global table, unique per-test name). The existing fixtures are unchanged.
+and tickets), then tickets (their assignments cascade), then the test's own maintenance types
+(global table; names end in the test's unique suffix). The existing fixtures are unchanged.
 """
 import uuid
 
@@ -54,11 +54,18 @@ def tickets(scene, client):
                    "FROM maintenance_tickets WHERE id = :t RETURNING id::text",
                    mt=type_id, u=world["tech_id"], d=description, t=ticket_id)[0][0]
 
-    yield dict(scene, report=report, add_user=add_user, sql=sql, record=record)
+    def mtype(name):
+        """B4 CP3: a maintenance type created through the admin API (unique per test, removed at teardown)."""
+        r = client.post(f"{API}/maintenance-types", headers=scene["h"]["admin"], json={"name": f"{name}-{world['sfx']}"})
+        assert r.status_code == 201, r.text
+        return r.json()["id"]
+
+    yield dict(scene, report=report, add_user=add_user, sql=sql, record=record, mtype=mtype)
 
     with get_session_factory()() as db:
         orgs = [uuid.UUID(world["org"]), uuid.UUID(world["other"])]
         for table in ("maintenance_records", "maintenance_schedules", "maintenance_tickets"):
             db.execute(text(f"DELETE FROM {table} WHERE organization_id = ANY(:o)"), {"o": orgs})
-        db.execute(text("DELETE FROM maintenance_types WHERE name = :n"), {"n": type_name})
+        db.execute(text("DELETE FROM maintenance_types WHERE name = :n OR name LIKE :p"),
+                   {"n": type_name, "p": f"%-{world['sfx']}"})
         db.commit()
