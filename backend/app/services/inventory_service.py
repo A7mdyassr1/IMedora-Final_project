@@ -33,6 +33,7 @@ import logging
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.access import AccessScope
@@ -86,7 +87,11 @@ def movement(kind: MovementKind, change: int, reason: Optional[str] = None,
 
 class StockLedger:
     """Writes the audit row of a stock change (the stock history). Shared by stock adjustments
-    (this module) and part usage (maintenance records, CP2) so both write the same shape."""
+    (this module) and part usage (maintenance records, CP2) so both write the same shape.
+
+    Movement rows are time-stamped with clock_timestamp() - the moment the row is written, while
+    the stock row's lock is held - not now() (transaction start): concurrent changes queue on that
+    lock, so this is the order in which they were really applied, and the history replays exactly."""
 
     def __init__(self, audit: AuditService):
         self.audit = audit
@@ -96,6 +101,7 @@ class StockLedger:
             actor_id=actor_id, organization_id=inv.organization_id, table_name=PartInventory.__tablename__,
             record_id=inv.id, action=AuditAction.INSERT,
             new_values={**snapshot(inv), **movement(MovementKind.OPENING, inv.quantity_on_hand, reason)},
+            at=func.clock_timestamp(),
         )
 
     def changed(self, actor_id: uuid.UUID, inv: PartInventory, before: Dict[str, Any], kind: MovementKind,
@@ -104,7 +110,8 @@ class StockLedger:
         change = inv.quantity_on_hand - before["quantity_on_hand"]
         if change == 0:
             return
-        self.audit.updated(actor_id, inv, before, extra_new=movement(kind, change, reason, maintenance_record_id))
+        self.audit.updated(actor_id, inv, before, extra_new=movement(kind, change, reason, maintenance_record_id),
+                           at=func.clock_timestamp())
 
 
 class InventoryService:

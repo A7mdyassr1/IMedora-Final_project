@@ -14,7 +14,7 @@ Database rules these mirrors declare (enforced by PostgreSQL, not re-implemented
 """
 import uuid
 from datetime import date, datetime
-from typing import Optional
+from typing import List, Optional
 
 from sqlalchemy import (
     Boolean, CheckConstraint, Date, DateTime, FetchedValue, ForeignKey, ForeignKeyConstraint, Index, Integer,
@@ -25,6 +25,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
 from app.models.device import Device
+from app.models.part import MaintenancePart
 from app.models.user import User
 
 
@@ -104,3 +105,7 @@ class MaintenanceRecord(Base):
     device: Mapped[Device] = relationship(lazy="selectin")
     maintenance_type: Mapped[MaintenanceType] = relationship(lazy="selectin")
     performer: Mapped[User] = relationship(lazy="selectin", foreign_keys=[performed_by])
+    # B5: parts used (maintenance_parts). Read-only here: usage is written by app/services/part_usage.py
+    # under stock row locks, and the database trigger adjusts the stock.
+    parts_used: Mapped[List[MaintenancePart]] = relationship(
+        lazy="selectin", viewonly=True, order_by=lambda: (MaintenancePart.created_at, MaintenancePart.id))

@@ -5,13 +5,15 @@ the server cannot be sent. Responses show staff by name (only staff can read mai
 """
 import uuid
 from datetime import date, datetime
-from typing import Annotated, Optional
+from typing import Annotated, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
+from app.schemas.part import PartUse, UsedPart
 from app.utils.ticket_number import ticket_number
 
 RECORD_DESCRIPTION_MAX = 4000
+MAX_PART_LINES = 20  # parts listed on one maintenance record in one request
 MAX_FREQUENCY_DAYS = 3650  # ten years
 
 
@@ -60,6 +62,15 @@ class MaintenanceRecordCreate(BaseModel):
     performed_at: Optional[datetime] = Field(default=None, description="Defaults to now. ISO 8601; UTC if no offset.")
     ticket_id: Optional[uuid.UUID] = Field(default=None, description="Corrective work on this ticket (same device).")
     schedule_id: Optional[uuid.UUID] = Field(default=None, description="Preventive work for this schedule (same device and type).")
+    parts: List[PartUse] = Field(default_factory=list, max_length=MAX_PART_LINES,
+                                 description="Spare parts used, taken from the stock of the device's hospital (B5).")
+
+    @field_validator("parts")
+    @classmethod
+    def _one_line_per_part(cls, v: List[PartUse]) -> List[PartUse]:
+        if len({line.part_id for line in v}) != len(v):
+            raise ValueError("each part can be listed only once")
+        return v
 
 
 class MaintenanceRecordUpdate(BaseModel):
@@ -86,6 +97,7 @@ class MaintenanceRecordResponse(BaseModel):
     performed_by: Performer
     description: str
     performed_at: datetime
+    parts: List[UsedPart] = Field(default_factory=list, description="Spare parts used (B5).")
     created_at: datetime
     updated_at: datetime
 
@@ -97,7 +109,8 @@ class MaintenanceRecordResponse(BaseModel):
             ticket_id=r.ticket_id, ticket_number=ticket_number(r.ticket_id) if r.ticket_id else None,
             schedule_id=r.schedule_id,
             performed_by=Performer(id=r.performer.id, name=r.performer.full_name, role=r.performer.role.name),
-            description=r.description, performed_at=r.performed_at, created_at=r.created_at, updated_at=r.updated_at,
+            description=r.description, performed_at=r.performed_at,
+            parts=[UsedPart.build(mp) for mp in r.parts_used], created_at=r.created_at, updated_at=r.updated_at,
         )
 
 

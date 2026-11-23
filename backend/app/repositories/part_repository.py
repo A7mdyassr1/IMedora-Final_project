@@ -159,17 +159,6 @@ class PartRepository:
             .execution_options(populate_existing=True)
         ))
 
-    def usage_for_records(self, record_ids: Iterable[uuid.UUID]) -> Dict[uuid.UUID, List[MaintenancePart]]:
-        """Usage of several records in ONE query (record lists show their parts without N+1)."""
-        ids = list(set(record_ids))
-        result: Dict[uuid.UUID, List[MaintenancePart]] = {i: [] for i in ids}
-        if not ids:
-            return result
-        for row in self.db.scalars(select(MaintenancePart).where(MaintenancePart.maintenance_record_id.in_(ids))
-                                   .order_by(MaintenancePart.created_at, MaintenancePart.id)):
-            result[row.maintenance_record_id].append(row)
-        return result
-
     def usage_line(self, record_id: uuid.UUID, part_id: uuid.UUID, for_update: bool = False) -> Optional[MaintenancePart]:
         stmt = select(MaintenancePart).where(MaintenancePart.maintenance_record_id == record_id,
                                              MaintenancePart.part_id == part_id)

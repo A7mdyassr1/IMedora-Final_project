@@ -21,6 +21,7 @@ from app.schemas.maintenance import (
     MaintenanceRecordCreate, MaintenanceRecordResponse, MaintenanceRecordUpdate, MaintenanceScheduleCreate,
     MaintenanceScheduleResponse, MaintenanceScheduleUpdate, MaintenanceTypeCreate, MaintenanceTypeResponse,
 )
+from app.schemas.part import PartUse, PartUseUpdate
 from app.services.maintenance_service import MaintenanceService
 
 router = APIRouter(tags=["maintenance"])
@@ -102,6 +103,38 @@ def get_record(record_id: uuid.UUID, user: User = CurrentUser, db: Session = Dep
 )
 def update_record(record_id: uuid.UUID, body: MaintenanceRecordUpdate, user: User = CurrentUser, db: Session = Depends(get_db)):
     return MaintenanceRecordResponse.build(MaintenanceService(db).update_record(scope_for(user), record_id, body))
+
+
+# ---- parts used on a record (B5 CP2) -----------------------------------------------------------------
+@router.post(
+    "/maintenance-records/{record_id}/parts", response_model=MaintenanceRecordResponse, status_code=201,
+    summary="Add a spare part used in this work",
+    description="The technician who did the work, the hospital's engineers and administrators. The quantity is taken "
+                "from the stock of the device's hospital: 409 `part_not_stocked` if the hospital does not stock the "
+                "part, 409 `insufficient_stock` if not enough is on hand.",
+)
+def add_record_part(record_id: uuid.UUID, body: PartUse, user: User = CurrentUser, db: Session = Depends(get_db)):
+    return MaintenanceRecordResponse.build(MaintenanceService(db).add_part(scope_for(user), record_id, body))
+
+
+@router.patch(
+    "/maintenance-records/{record_id}/parts/{part_id}", response_model=MaintenanceRecordResponse,
+    summary="Correct the quantity of a part used (engineers, administrators)",
+    description="The difference is taken from (or given back to) the hospital's stock.",
+)
+def change_record_part(record_id: uuid.UUID, part_id: uuid.UUID, body: PartUseUpdate, user: User = CurrentUser,
+                       db: Session = Depends(get_db)):
+    return MaintenanceRecordResponse.build(
+        MaintenanceService(db).change_part(scope_for(user), record_id, part_id, body.quantity))
+
+
+@router.delete(
+    "/maintenance-records/{record_id}/parts/{part_id}", response_model=MaintenanceRecordResponse,
+    summary="Remove a part recorded by mistake (engineers, administrators)",
+    description="Its quantity goes back to the hospital's stock. The change is kept in the stock history and audit log.",
+)
+def remove_record_part(record_id: uuid.UUID, part_id: uuid.UUID, user: User = CurrentUser, db: Session = Depends(get_db)):
+    return MaintenanceRecordResponse.build(MaintenanceService(db).remove_part(scope_for(user), record_id, part_id))
 
 
 @router.get("/devices/{device_id}/maintenance-records", response_model=Page[MaintenanceRecordResponse],

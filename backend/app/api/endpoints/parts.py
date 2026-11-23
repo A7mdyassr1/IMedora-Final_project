@@ -4,6 +4,7 @@ Staff only (technicians, biomedical engineers, administrators); department users
 Stock rows outside the caller's hospital (organization for admins) are 404.
 """
 import uuid
+from datetime import datetime
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, Query, Response
@@ -13,13 +14,15 @@ from app.api.deps import CurrentUser, Pagination, pagination_params
 from app.core.access import scope_for
 from app.core.database import get_db
 from app.models.user import User
-from app.repositories.part_repository import InventoryFilters
+from app.repositories.part_repository import InventoryFilters, UsageFilters
 from app.schemas.common import Page
 from app.schemas.part import (
     InventoryAdjustment, InventoryCreate, InventoryResponse, InventoryUpdate, PartCreate, PartResponse, PartUpdate,
-    StockHistory,
+    PartSummary, StockHistory, UsageResponse,
 )
 from app.services.inventory_service import InventoryService
+from app.services.maintenance_service import MaintenanceService
+from app.utils.ticket_number import ticket_number
 
 router = APIRouter(tags=["parts"])
 
@@ -115,3 +118,31 @@ def adjust_inventory(inventory_id: uuid.UUID, body: InventoryAdjustment, user: U
 def inventory_movements(inventory_id: uuid.UUID, user: User = CurrentUser, db: Session = Depends(get_db)):
     inv, movements, untracked = InventoryService(db).history(scope_for(user), inventory_id)
     return StockHistory(inventory=InventoryResponse.build(inv), movements=movements, untracked_change=untracked)
+
+
+# ---- usage ----------------------------------------------------------------------------------------
+@router.get("/part-usage", response_model=Page[UsageResponse], summary="Spare parts used in maintenance",
+            description="Usage lines of maintenance records in the caller's hospital (administrators: organization), "
+                        "newest work first. Filter by part, device, ticket or record to see what was consumed where.")
+def list_part_usage(
+    p: Pagination = Depends(pagination_params),
+    part_id: Optional[uuid.UUID] = None,
+    hospital_id: Optional[uuid.UUID] = None,
+    device_id: Optional[uuid.UUID] = None,
+    ticket_id: Optional[uuid.UUID] = None,
+    maintenance_record_id: Optional[uuid.UUID] = None,
+    performed_from: Optional[datetime] = Query(None, description="Inclusive (work time); ISO 8601, UTC if no offset"),
+    performed_to: Optional[datetime] = Query(None, description="Exclusive (work time); ISO 8601, UTC if no offset"),
+    sort: Literal["performed_at", "created_at"] = "performed_at",
+    order: Literal["asc", "desc"] = "desc",
+    user: User = CurrentUser,
+    db: Session = Depends(get_db),
+):
+    f = UsageFilters(part_id=part_id, hospital_id=hospital_id, device_id=device_id, ticket_id=ticket_id,
+                     maintenance_record_id=maintenance_record_id, performed_from=performed_from, performed_to=performed_to)
+    rows, total = MaintenanceService(db).list_usage(scope_for(user), f, sort, order == "desc", p.page, p.page_size)
+    items = [UsageResponse(id=mp.id, part=PartSummary.model_validate(mp.part), quantity=mp.quantity,
+                           maintenance_record_id=rec.id, hospital_id=rec.hospital_id, device_id=rec.device_id,
+                           ticket_id=rec.ticket_id, ticket_number=ticket_number(rec.ticket_id) if rec.ticket_id else None,
+                           performed_at=rec.performed_at, created_at=mp.created_at) for mp, rec in rows]
+    return Page[UsageResponse](items=items, total=total, page=p.page, page_size=p.page_size)

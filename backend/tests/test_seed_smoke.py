@@ -270,3 +270,21 @@ def test_seeded_maintenance_data_reads_through_the_api(seed):
     assert records["total"] >= 1 and all(r["device"]["device_code"] == "DEV-001" for r in records["items"])
     assert c.get(f"{API}/devices/{dev.id}/maintenance-records", headers=h["dept_icu"]).status_code == 403
     assert c.get(f"{API}/devices/{dev.id}/maintenance-records", headers=h["tech_other"]).status_code == 404
+
+
+# ---- B5: spare parts on seeded data (read-only) ----------------------------------------------------
+def test_seeded_parts_stock_and_usage_read_through_the_api(seed):
+    """The seeded part, its CMC-MAIN stock and its use on DEV-001's record are readable by staff of the
+    hospital only. Seeded stock was written directly in the database, so the stock history reports it
+    as untracked instead of inventing movements. Nothing is written."""
+    c, h, dev = seed["client"], seed["h"], seed["devices"]["DEV-001"]
+    parts = c.get(f"{API}/parts", headers=h["tech"], params={"q": "PN-TUBING-001"}).json()["items"]
+    assert [p["part_number"] for p in parts] == ["PN-TUBING-001"]
+    stock = c.get(f"{API}/inventory", headers=h["tech"], params={"part_id": parts[0]["id"]}).json()["items"]
+    assert len(stock) == 1 and stock[0]["quantity_on_hand"] >= 0
+    history = c.get(f"{API}/inventory/{stock[0]['id']}/movements", headers=h["tech"]).json()
+    assert history["untracked_change"] == stock[0]["quantity_on_hand"] - sum(m["quantity_change"] for m in history["movements"])
+    records = c.get(f"{API}/devices/{dev.id}/maintenance-records", headers=h["tech"]).json()["items"]
+    assert any(p["part"]["part_number"] == "PN-TUBING-001" for r in records for p in r["parts"])
+    assert c.get(f"{API}/inventory/{stock[0]['id']}", headers=h["tech_other"]).status_code == 404
+    assert c.get(f"{API}/inventory", headers=h["dept_icu"]).status_code == 403

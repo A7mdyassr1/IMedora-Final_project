@@ -81,13 +81,17 @@ class AuditService:
         action: AuditAction,
         old_values: Optional[Dict[str, Any]] = None,
         new_values: Optional[Dict[str, Any]] = None,
+        at: Any = None,
     ) -> AuditLog:
+        """`at`: optional SQL expression for created_at (default: the database's now(), i.e. the
+        transaction start). B5 stock movements pass clock_timestamp() so rows written under a
+        row lock sort in the order the changes were really applied."""
         for values in (old_values, new_values):  # last line of defence: never persist a secret
             if values:
                 for key in list(values):
                     if _is_secret(key) and key not in PASSWORD_CHANGED:
                         del values[key]
-        return self.repo.add(AuditLog(
+        row = AuditLog(
             organization_id=organization_id,
             user_id=actor_id,
             table_name=table_name,
@@ -95,7 +99,10 @@ class AuditService:
             action=action,
             old_values=old_values or None,
             new_values=new_values or None,
-        ))
+        )
+        if at is not None:
+            row.created_at = at
+        return self.repo.add(row)
 
     # -- convenience wrappers ---------------------------------------------------------
     @staticmethod
@@ -120,6 +127,7 @@ class AuditService:
         before: Dict[str, Any],
         organization_id: Optional[uuid.UUID] = None,
         extra_new: Optional[Dict[str, Any]] = None,
+        at: Any = None,
     ) -> Optional[AuditLog]:
         """`before` = snapshot(obj) taken before the change. Only changed fields are stored;
         nothing is written when nothing changed (unless `extra_new`, e.g. a password marker)."""
@@ -134,7 +142,7 @@ class AuditService:
         return self.record(
             actor_id=actor_id, organization_id=self._org(obj, organization_id),
             table_name=table_of(obj), record_id=obj.id, action=AuditAction.UPDATE,
-            old_values=old, new_values=new,
+            old_values=old, new_values=new, at=at,
         )
 
     def deleted(self, actor_id: Optional[uuid.UUID], obj: Any, organization_id: Optional[uuid.UUID] = None) -> AuditLog:

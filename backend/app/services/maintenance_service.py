@@ -28,6 +28,21 @@ Rules:
   it, with the DEVICE ROW LOCKED (lock order: ticket, then device), audited when it changes.
 - Dates of timestamps are taken in the database's time zone (one deployment per organization).
 - Every mutation writes its audit rows in the same transaction.
+
+Parts used (B5 CP2; stock arithmetic by the database trigger, see app/services/part_usage.py):
+
+    action                         technician            biomedical_engineer   admin
+    -----------------------------  --------------------  --------------------  ------------
+    list parts on a new record     yes (own hospital)    own hospital          organization
+    add a part to a record         records they did      own hospital          organization
+    correct / remove a usage line  -                     own hospital          organization
+    read part usage                own hospital          own hospital          organization
+
+- Parts come from the stock of the RECORD'S (device's) hospital, which must be active.
+- A new record and its parts are one transaction: not enough stock -> nothing is recorded.
+- No new usage on archived devices; corrections stay possible (bookkeeping of real movements).
+- Usage on a ticket that is closed, cancelled or deleted is final (409); the ticket row is
+  locked first, as for new records.
 """
 import logging
 import uuid
@@ -45,11 +60,14 @@ from app.models.device import Device
 from app.models.maintenance import MaintenanceRecord, MaintenanceSchedule, MaintenanceType
 from app.repositories.device_repository import DeviceRepository
 from app.repositories.maintenance_repository import MaintenanceRepository, RecordFilters, ScheduleFilters
+from app.repositories.part_repository import PartRepository, UsageFilters
 from app.repositories.ticket_repository import TicketRepository
 from app.schemas.maintenance import (
     MaintenanceRecordCreate, MaintenanceRecordUpdate, MaintenanceScheduleCreate, MaintenanceScheduleUpdate,
 )
+from app.schemas.part import PartUse
 from app.services.audit_service import AuditService, snapshot
+from app.services.part_usage import PartUsage
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +88,7 @@ class MaintenanceService:
         self.devices = DeviceRepository(db)
         self.tickets = TicketRepository(db)
         self.audit = AuditService(db)
+        self.usage = PartUsage(db, self.audit)
 
     # ---- permission helpers -------------------------------------------------------------------------
     @staticmethod
@@ -209,9 +228,11 @@ class MaintenanceService:
                 self.db.flush()
                 self.audit.updated(scope.user_id, schedule, before)
                 self._recompute_next_due(scope.user_id, device.id)
+        # B5: parts used, from the device's hospital stock (locked last); any failure undoes the record too
+        self.usage.use(scope.user_id, record, data.parts)
         self.db.commit()
-        logger.info("Maintenance record created id=%s device=%s ticket=%s schedule=%s",
-                    record.id, device.id, data.ticket_id, data.schedule_id)
+        logger.info("Maintenance record created id=%s device=%s ticket=%s schedule=%s parts=%s",
+                    record.id, device.id, data.ticket_id, data.schedule_id, len(data.parts))
         return self.get_record(scope, record.id)
 
     def update_record(self, scope: AccessScope, record_id: uuid.UUID, data: MaintenanceRecordUpdate) -> MaintenanceRecord:
@@ -243,6 +264,64 @@ class MaintenanceService:
         self.audit.updated(scope.user_id, record, before)
         self.db.commit()
         return self.get_record(scope, record_id)
+
+    # ---- parts used (B5 CP2) -------------------------------------------------------------------------
+    def _record_for_usage(self, scope: AccessScope, record_id: uuid.UUID, *, correction: bool) -> MaintenanceRecord:
+        """Checks who may change the record's parts, locks ticket -> record, returns the locked record."""
+        self._require_staff(scope)
+        record = self.repo.get_record(scope, record_id)
+        if record is None:
+            raise NotFoundError("Maintenance record not found.")
+        manager = self._manages_hospital(scope, record.hospital_id)
+        if correction and not manager:
+            raise ForbiddenError("Only biomedical engineers of the hospital and administrators can correct the parts "
+                                 "used on a maintenance record.")
+        if not correction and not (manager or record.performed_by == scope.user_id):
+            raise ForbiddenError("Only the technician who did the work, the hospital's engineers and administrators "
+                                 "can add parts to this maintenance record.")
+        if not record.device.hospital.is_active:
+            raise BadRequestError("Hospital is inactive; its stock cannot be changed.")
+        if not correction and record.device.deleted_at is not None:
+            raise BadRequestError("Archived devices cannot receive new maintenance data.")
+        if record.ticket_id is not None:
+            ticket = self.tickets.get_for_update(scope, record.ticket_id, include_deleted=True)
+            if ticket is None or ticket.is_deleted or ticket.status in TERMINAL:
+                raise ConflictError("The parts used on a closed, cancelled or deleted ticket cannot be changed.")
+        return self.repo.get_record(scope, record_id, for_update=True)
+
+    def add_part(self, scope: AccessScope, record_id: uuid.UUID, line: PartUse) -> MaintenanceRecord:
+        record = self._record_for_usage(scope, record_id, correction=False)
+        self.usage.use(scope.user_id, record, [line])
+        self.db.commit()
+        logger.info("Part used record=%s part=%s quantity=%s", record_id, line.part_id, line.quantity)
+        return self.get_record(scope, record_id)
+
+    def _usage_line(self, record: MaintenanceRecord, part_id: uuid.UUID):
+        usage = PartRepository(self.db).usage_line(record.id, part_id, for_update=True)
+        if usage is None:
+            raise NotFoundError("This part is not listed on this maintenance record.")
+        return usage
+
+    def change_part(self, scope: AccessScope, record_id: uuid.UUID, part_id: uuid.UUID, quantity: int) -> MaintenanceRecord:
+        record = self._record_for_usage(scope, record_id, correction=True)
+        if self.usage.change(scope.user_id, record, self._usage_line(record, part_id), quantity):
+            self.db.commit()
+            logger.info("Part usage corrected record=%s part=%s quantity=%s", record_id, part_id, quantity)
+        else:
+            self.db.rollback()  # nothing to change: release the locks
+        return self.get_record(scope, record_id)
+
+    def remove_part(self, scope: AccessScope, record_id: uuid.UUID, part_id: uuid.UUID) -> MaintenanceRecord:
+        record = self._record_for_usage(scope, record_id, correction=True)
+        self.usage.remove(scope.user_id, record, self._usage_line(record, part_id))
+        self.db.commit()
+        logger.info("Part usage removed record=%s part=%s", record_id, part_id)
+        return self.get_record(scope, record_id)
+
+    def list_usage(self, scope: AccessScope, f: UsageFilters, sort: str, descending: bool, page: int, page_size: int):
+        self._require_staff(scope)
+        f.performed_from, f.performed_to = _aware(f.performed_from), _aware(f.performed_to)
+        return PartRepository(self.db).list_usage(scope, f, sort, descending, page, page_size)
 
     # ---- schedules ----------------------------------------------------------------------------------
     def get_schedule(self, scope: AccessScope, schedule_id: uuid.UUID) -> MaintenanceSchedule:
