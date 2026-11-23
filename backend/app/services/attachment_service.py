@@ -3,9 +3,11 @@
 Upload (POST /tickets/{id}/attachments):
 - Who: the ticket's reporter, its active assignees, engineers of its hospital and admins - the
   people working on the problem. Anyone else who can see the ticket gets 403; a ticket outside the
-  caller's scope is 404 (as every ticket read).
+  caller's scope is 404 (as every ticket read); a department user who has lost their department
+  gets 403 department_required (no problem reporting without a department).
 - When: not on deleted, closed or cancelled tickets (409); not in an inactive hospital (400).
-- What: JPEG / PNG only, checked from the CONTENT; size limit MAX_UPLOAD_MB (413); metadata such as
+- What: JPEG / PNG only, checked from the CONTENT; size limit MAX_UPLOAD_MB (413, refused before the
+  body is read when Content-Length shows it: app/middleware/upload_limit.py); metadata such as
   GPS / EXIF is removed by re-encoding (app/utils/images.py). The original name is kept only as
   `file_name` (cleaned); the stored file gets a random key.
 - At most MAX_PER_TICKET attachments per ticket, counted with the TICKET ROW LOCKED, so parallel
@@ -101,6 +103,10 @@ class AttachmentService:
     def _check_upload(self, scope: AccessScope, ticket: Optional[MaintenanceTicket]) -> MaintenanceTicket:
         if ticket is None:
             raise NotFoundError("Ticket not found.")
+        # A department user without a department cannot report problems (B3.1 condition); adding
+        # photos is part of reporting. Reading their own tickets stays possible (Q11).
+        if scope.role is Role.DEPARTMENT_USER:
+            scope.require_device_access()
         facts = self._facts(ticket)
         if not (ticket.reported_by == scope.user_id or manages(scope, facts) or is_active_assignee(scope, facts)):
             raise ForbiddenError("Only the reporter, the assigned staff, the hospital's engineers and administrators "

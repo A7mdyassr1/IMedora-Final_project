@@ -16,6 +16,7 @@ from app.api.router import api_v1_router
 from app.core.config import get_settings
 from app.core.database import check_database_connection, dispose_engine, safe_database_url
 from app.core.exceptions import register_exception_handlers
+from app.middleware.upload_limit import UploadSizeLimitMiddleware
 from app.core.logging_config import setup_logging
 
 logger = logging.getLogger("imedora")
@@ -47,6 +48,10 @@ def create_app() -> FastAPI:
         description="REST API for IMedora - medical device management for hospitals.",
         lifespan=lifespan,
     )
+
+    # B5: refuse oversized photo uploads before their body is read (added first = inside CORS,
+    # so browser clients still receive CORS headers on the 413)
+    app.add_middleware(UploadSizeLimitMiddleware, api_prefix=settings.api_v1_prefix)
 
     origins = settings.cors_origins_list
     app.add_middleware(

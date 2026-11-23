@@ -12,7 +12,8 @@ app/
 ├── schemas/       # Request/response data schemas (validation)
 ├── services/      # Business logic, orchestration between repositories
 ├── repositories/  # Data-access layer (queries, persistence)
-├── middleware/     # Cross-cutting concerns (auth, logging, error handling)
+├── middleware/     # Cross-cutting concerns (B5: early refusal of oversized uploads)
+├── storage/       # File storage for attachments (interface + local disk, B5)
 ├── utils/         # Generic helper functions
 └── main.py        # Application entry point / factory
 tests/             # Backend test suite
@@ -216,6 +217,67 @@ Staff only: technicians, biomedical engineers, administrators. Department users 
 - The device row is locked while this happens, so concurrent changes cannot leave a stale date.
 - Dates come from the database's time zone.
 
+## Spare parts and stock (B5 CP1–CP2)
+
+Staff only (technicians, biomedical engineers, administrators); department users get 403. Stock is per hospital and scoped like maintenance data: own hospital, administrators the organization; out of scope is 404.
+
+| Endpoint | Who | Notes |
+|---|---|---|
+| `GET /api/v1/parts`, `GET …/{id}` | staff | Global catalog (like the device catalog). `q` searches name and part number |
+| `POST /api/v1/parts`, `PATCH …/{id}` | engineer, admin | `{name, part_number, unit?, description?}`; `part_number` is unique, stored upper-case, no spaces |
+| `DELETE /api/v1/parts/{id}` | engineer, admin | Only while no hospital stocks it and it was never used (409 `in_use`) |
+| `GET /api/v1/inventory`, `GET …/{id}` | staff | Filters: `hospital_id`, `part_id`, `low_stock=true` (at or below the reorder threshold), `q` |
+| `POST /api/v1/inventory` | engineer (own hospital), admin | `{part_id, hospital_id?, quantity_on_hand?, reorder_threshold?, reason?}`: one stock row per hospital and part |
+| `PATCH /api/v1/inventory/{id}` | engineer (own hospital), admin | `{reorder_threshold}` only. The quantity cannot be set directly |
+| `POST /api/v1/inventory/{id}/adjustments` | engineer (own hospital), admin | `{kind: restock \| correction, quantity_change, reason}`. Restocks add; corrections take either sign |
+| `GET /api/v1/inventory/{id}/movements` | staff | Stock history, oldest first: `opening`, `restock`, `correction`, `usage`, `usage_change`, `usage_return`, with reason, record and who. `untracked_change` shows stock written outside the API (seed data, imports) |
+| `POST /api/v1/maintenance-records` with `parts: [{part_id, quantity}]` | staff (as for records) | The record and its parts are one transaction |
+| `POST /api/v1/maintenance-records/{id}/parts` | the record's performer, engineer (own hospital), admin | `{part_id, quantity}` |
+| `PATCH`, `DELETE /api/v1/maintenance-records/{id}/parts/{part_id}` | engineer (own hospital), admin | Correct the quantity (the stock moves by the difference) or remove the line (the stock is given back) |
+| `GET /api/v1/part-usage` | staff | What was used where. Filters: `part_id`, `hospital_id`, `device_id`, `ticket_id`, `maintenance_record_id`, `performed_from`, `performed_to` |
+
+**Stock rules:**
+- Stock can never go below zero: **409 `insufficient_stock`** (with `available` / `requested`). A part the device's hospital does not stock: **409 `part_not_stocked`**.
+- The database trigger on `maintenance_parts` does the stock arithmetic. The API locks the stock rows first (`SELECT … FOR UPDATE`, in part order), checks under the lock, and audits the usage line and the stock movement in the same transaction. Concurrent usage, restocks and corrections queue; none is lost or oversold.
+- The database `CHECK` and the trigger's `RAISE EXCEPTION` remain the last line of defence and map to the same 409 errors.
+- Usage on a closed, cancelled or deleted ticket is final (409). No new usage on archived devices. An inactive hospital's stock is read-only (400).
+
+## Notifications (B5 CP3)
+
+In-app only. Every role reads **only their own** notifications; another user's id is 404.
+
+| Endpoint | Notes |
+|---|---|
+| `GET /api/v1/notifications` | Newest first; `unread_only`; the response also has `unread_count` |
+| `PATCH /api/v1/notifications/{id}/read` | Idempotent; `read_at` comes from the database clock |
+| `POST /api/v1/notifications/read-all` | `{updated: n}` |
+
+The server creates them in the same transaction as the event, so a refused or failed change notifies nobody:
+
+| `type` | Event | Recipients |
+|---|---|---|
+| `ticket_created` | a problem is reported | the reporter ("request received"), and the hospital's engineers and technicians |
+| `ticket_assigned` | someone is assigned (including taking a ticket) | the assignee and the reporter |
+| `ticket_status_changed` | in progress, waiting for parts, closed, cancelled, reopened, back to open | the reporter and the active assignees |
+| `ticket_resolved` | resolved | the reporter, with the work description |
+| `device_alert` | a device goes under maintenance / out of service / back to active | the device's department users |
+
+Nobody is notified of their own action; inactive or deleted users are skipped; texts never name staff (department users see roles). Every notification and read change is audited.
+
+## Ticket photos (B5 CP4)
+
+| Endpoint | Who | Notes |
+|---|---|---|
+| `POST /api/v1/tickets/{id}/attachments` | the reporter, active assignees, engineer (own hospital), admin | `multipart/form-data`, one `file`. JPEG or PNG only, recognised from the content (415 `unsupported_file`); at most `MAX_UPLOAD_MB` (413 `file_too_large`); at most 3 per ticket (409 `attachment_limit_reached`) |
+| `GET /api/v1/tickets/{id}/attachments` | anyone who can see the ticket | Also included in every ticket detail as `attachments` |
+| `GET /api/v1/attachments/{id}` | anyone who can see the parent | The file itself (`nosniff`, `no-store`) |
+
+- **Privacy:** location (GPS) and all other EXIF / XMP / text metadata are removed by re-encoding; the photo's orientation is applied first. Files are private: `file_url` in the database is an internal storage key, never a public address, and files are served only through the API after the visibility check.
+- **Storage:** `STORAGE_BACKEND=local`, `STORAGE_DIR` (default `<repo>/storage/attachments`, git-ignored). **Back this folder up together with the database.** Keys are random; names are kept only for display.
+- **Consistency:** the file is written first, then the row and its audit row are committed; on any failure the file is deleted again. The count of 3 is checked with the ticket row locked.
+- Oversized uploads are refused before their body is read when the request announces its size. In production, also cap the request size at the reverse proxy.
+- Not on closed, cancelled or deleted tickets, nor in inactive hospitals. Rows written before B5 (seed data with an external URL) are listed, but their file is never fetched or redirected to (404).
+
 ## Planned API Domains
 
 - Authentication
@@ -225,7 +287,8 @@ Staff only: technicians, biomedical engineers, administrators. Department users 
 - Medical Devices
 - Maintenance (preventive & corrective)
 - Tickets
-- Parts
+- Parts (B5)
+- Notifications, attachments (B5)
 - Reports / Analytics
 - Risk Management
 - Quality Assurance
@@ -250,7 +313,7 @@ Staff only: technicians, biomedical engineers, administrators. Department users 
     - New tests: a schema-compatibility test and opt-in seed smoke tests.
     - The read-only token guard is deferred to the AI phase.
 - **B3.1 done** (commit `c2aebbf`).
-- **B4 (tickets & maintenance) in progress** on `feature/backend-b4-jana`:
+- **B4 (tickets & maintenance) done** on `feature/backend-b4-jana` (`a2168d6`, `9d7031d`, `062ef46`; seed fix `7d5fa04`):
   - **Checkpoint 1 (ticket core):**
     - ORM mirrors of the five maintenance tables and the ticket enums.
     - Report a problem, including on another department's device scanned by QR.
@@ -258,5 +321,10 @@ Staff only: technicians, biomedical engineers, administrators. Department users 
     - Visibility rules in `app/core/access.py`.
   - **Checkpoint 2 (workflow):** status transitions, assignments, priority, admin soft delete, row locking, timeline v2.
   - **Checkpoint 3 (maintenance):** maintenance types, records and schedules; `next_maintenance_due_date`; work-performed events in the ticket timeline; tickets resolvable through the API alone.
-  - Next: CP4 integration and sign-off.
-  - `GET /devices/{id}/history` is deferred until B4/B6 provide the data it shows.
+  - `GET /devices/{id}/history` is deferred until the data it shows exists (parts are now available; risk/QA follow).
+- **B5 (spare parts, notifications, attachments)** on `feature/backend-b5-jana`:
+  - **Checkpoint 1:** parts catalog, per-hospital stock, adjustments and stock history; stock errors mapped.
+  - **Checkpoint 2:** parts used on maintenance records, row-locked, through the database trigger; usage report.
+  - **Checkpoint 3:** in-app notifications for ticket and device events; the mobile app's three notification endpoints.
+  - **Checkpoint 4:** ticket photos (Decision 5): storage interface, local disk, content checks, metadata removal, limit of 3.
+  - No schema change and no migration.

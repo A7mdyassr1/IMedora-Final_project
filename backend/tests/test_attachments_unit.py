@@ -84,3 +84,35 @@ def test_local_storage_round_trip_and_key_safety(tmp_path):
         store.delete(bad)                                          # never raises, never touches anything
     with pytest.raises(ValueError):
         store.save(b"x", ".exe")
+
+
+def _asgi(path, length, method="POST"):
+    """Run the upload-limit middleware once; returns (status, inner_app_was_called)."""
+    import asyncio
+
+    from app.middleware.upload_limit import UploadSizeLimitMiddleware
+    called, sent = [], []
+
+    async def inner(scope, receive, send):
+        called.append(True)
+
+    async def send(message):
+        sent.append(message)
+
+    async def receive():  # pragma: no cover - never read by the middleware
+        raise AssertionError("the body must not be read")
+
+    headers = [(b"content-length", str(length).encode())] if length is not None else []
+    scope = {"type": "http", "method": method, "path": path, "headers": headers}
+    asyncio.run(UploadSizeLimitMiddleware(inner)(scope, receive, send))
+    return (sent[0]["status"] if sent else None), bool(called)
+
+
+def test_upload_limit_middleware_refuses_only_oversized_photo_uploads():
+    from app.core.config import get_settings
+    big = get_settings().max_upload_bytes + 1024 * 1024
+    assert _asgi("/api/v1/tickets/abc/attachments", big) == (413, False)
+    assert _asgi("/api/v1/tickets/abc/attachments", 1000) == (None, True)          # within the limit
+    assert _asgi("/api/v1/tickets/abc/attachments", None) == (None, True)          # chunked: the endpoint checks
+    assert _asgi("/api/v1/tickets/abc/attachments", big, "GET") == (None, True)    # only uploads
+    assert _asgi("/api/v1/tickets", big) == (None, True)                           # other routes untouched

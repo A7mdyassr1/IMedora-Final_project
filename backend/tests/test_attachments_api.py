@@ -111,6 +111,25 @@ def test_who_may_upload_and_download(client, tickets):
     _err(client.get(url), 401)
 
 
+def test_a_department_user_without_a_department_adds_no_photos_but_still_sees_them(client, tickets):
+    h = tickets["h"]
+    tid = tickets["report"](h["dept_icu"], "icu").json()["id"]
+    assert _upload(client, h["dept_icu"], tid, png(), "a.png", "image/png").status_code == 201
+    tickets["sql"]("UPDATE users SET department_id = NULL WHERE email = :e", e=tickets["world"]["staff"])
+    _err(_upload(client, h["dept_icu"], tid, png(), "b.png", "image/png"), 403, "department_required")
+    assert len(client.get(f"{API}/tickets/{tid}/attachments", headers=h["dept_icu"]).json()) == 1   # Q11
+
+
+def test_oversized_uploads_are_refused_before_the_body_is_read(client, tickets):
+    """Content-Length above the limit: 413 from the middleware, the endpoint (and the ticket lookup) never run."""
+    h = tickets["h"]
+    limit = get_settings().max_upload_bytes
+    r = client.post(f"{API}/tickets/{tickets['world']['org']}/attachments",
+                    headers={**h["dept_icu"], "Content-Type": "multipart/form-data; boundary=x",
+                             "Content-Length": str(limit + 10 * 1024 * 1024)}, content=b"--x--")
+    _err(r, 413, "file_too_large")
+
+
 def test_only_real_jpeg_and_png_within_the_size_limit(client, tickets):
     h = tickets["h"]
     tid = tickets["report"](h["dept_icu"], "icu").json()["id"]
