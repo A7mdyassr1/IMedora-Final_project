@@ -120,9 +120,15 @@ def run():
                 (org_id, hospital_id, device_id, corrective_type_id, ticket_id, technician_id),
             )
 
+        # Same rule as the backend (B4 CP3): the earliest due date of the device's ACTIVE schedules,
+        # NULL when there are none. Derived, so re-running this seed on a later day stays consistent.
         cur.execute(
-            "UPDATE devices SET next_maintenance_due_date = CURRENT_DATE + INTERVAL '90 days' WHERE id = %s",
-            (device_id,),
+            """
+            UPDATE devices SET next_maintenance_due_date = (
+                SELECT min(next_due_date) FROM maintenance_schedules WHERE device_id = %s AND is_active
+            ) WHERE id = %s
+            """,
+            (device_id, device_id),
         )
 
         conn.commit()
