@@ -13,10 +13,10 @@ from typing import Any, List, Optional
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
+from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError, SQLAlchemyError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.core.db_errors import describe_integrity_error
+from app.core.db_errors import describe_integrity_error, describe_trigger_error
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +121,11 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(SQLAlchemyError)
     async def handle_sqlalchemy_error(request: Request, exc: SQLAlchemyError):
+        mapped = describe_trigger_error(exc) if isinstance(exc, DBAPIError) else None
+        if mapped is not None:  # B5: RAISE EXCEPTION from a database trigger (e.g. part not stocked)
+            logger.warning("Database trigger rejected a change: %s", exc.orig)
+            status, code, message = mapped
+            return JSONResponse(error_body(code, message), status_code=status)
         logger.error("Unexpected database error", exc_info=exc)
         return JSONResponse(
             error_body("internal_error", "An unexpected error occurred."), status_code=500

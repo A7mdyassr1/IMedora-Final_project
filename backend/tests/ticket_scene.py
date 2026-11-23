@@ -4,7 +4,9 @@
 devices, `world` removes users and audit rows). It deletes, bottom-up and only for the test's two
 organizations, every maintenance row the test created: records and schedules (RESTRICT devices
 and tickets), then tickets (their assignments cascade), then the test's own maintenance types
-(global table; names end in the test's unique suffix). The existing fixtures are unchanged.
+(global table; names end in the test's unique suffix). B5 adds: parts usage (cascades with the
+records), the organizations' stock rows and the test's own catalog parts. The existing fixtures
+are unchanged.
 """
 import uuid
 
@@ -64,8 +66,13 @@ def tickets(scene, client):
 
     with get_session_factory()() as db:
         orgs = [uuid.UUID(world["org"]), uuid.UUID(world["other"])]
+        # B5: parts usage goes with its records (ON DELETE CASCADE; the trigger gives the stock back)
         for table in ("maintenance_records", "maintenance_schedules", "maintenance_tickets"):
             db.execute(text(f"DELETE FROM {table} WHERE organization_id = ANY(:o)"), {"o": orgs})
+        # B5: the test organizations' stock rows, then the test's own catalog parts (global table;
+        # part numbers contain the test's unique suffix)
+        db.execute(text("DELETE FROM part_inventory WHERE organization_id = ANY(:o)"), {"o": orgs})
+        db.execute(text("DELETE FROM parts WHERE part_number ILIKE :p"), {"p": f"%{world['sfx']}%"})
         db.execute(text("DELETE FROM maintenance_types WHERE name = :n OR name LIKE :p"),
                    {"n": type_name, "p": f"%-{world['sfx']}"})
         db.commit()

@@ -1,10 +1,10 @@
 """
 /api/v1 router. Each later phase mounts its endpoint module here
-(tickets/maintenance in B4, ...).
+(tickets/maintenance in B4, parts/notifications/attachments in B5, ...).
 """
 from fastapi import APIRouter
 
-from app.api.endpoints import auth, catalog, devices, health, maintenance, structure, tickets, users
+from app.api.endpoints import auth, catalog, devices, health, maintenance, parts, structure, tickets, users
 
 api_v1_router = APIRouter()
 
@@ -23,3 +23,4 @@ api_v1_router.include_router(catalog.model_router)
 api_v1_router.include_router(devices.router)
 api_v1_router.include_router(tickets.router)
 api_v1_router.include_router(maintenance.router)
+api_v1_router.include_router(parts.router)

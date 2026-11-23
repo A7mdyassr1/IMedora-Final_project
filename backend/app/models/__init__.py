@@ -8,12 +8,13 @@ from app.models.hospital import Hospital
 from app.models.location import Location
 from app.models.maintenance import MaintenanceRecord, MaintenanceSchedule, MaintenanceType
 from app.models.organization import Organization
+from app.models.part import MaintenancePart, Part, PartInventory
 from app.models.role import Role
 from app.models.ticket import MaintenanceTicket, TicketAssignment
 from app.models.user import User
 
 __all__ = [
     "AuditLog", "Base", "Department", "Device", "DeviceCategory", "DeviceModel", "Hospital",
-    "Location", "MaintenanceRecord", "MaintenanceSchedule", "MaintenanceTicket", "MaintenanceType", "Manufacturer",
-    "Organization", "Role", "TicketAssignment", "User",
+    "Location", "MaintenancePart", "MaintenanceRecord", "MaintenanceSchedule", "MaintenanceTicket", "MaintenanceType", "Manufacturer",
+    "Organization", "Part", "PartInventory", "Role", "TicketAssignment", "User",
 ]
