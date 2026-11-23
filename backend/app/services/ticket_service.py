@@ -20,6 +20,9 @@ Workflow (CP2; rules in app/core/ticket_workflow.py, decisions Q4-Q8):
 - Ticket status never changes the device's status (Q8).
 - Timestamps that the database CHECKs against created_at / assigned_at (resolved_at,
   unassigned_at) are set with the database clock (now()), never the application clock.
+
+Notifications (B5 CP3, app/services/notification_service.py): reporting, assigning and every status
+change notify the people concerned, in the SAME transaction, just before the commit.
 """
 import logging
 import uuid
@@ -42,6 +45,7 @@ from app.repositories.device_repository import DeviceRepository
 from app.repositories.ticket_repository import TicketFilters, TicketRepository
 from app.schemas.ticket import TicketCreate
 from app.services.audit_service import AuditService, snapshot
+from app.services.notification_service import Notifier
 from app.repositories.maintenance_repository import MaintenanceRepository
 from app.services.ticket_timeline import AssignmentEntry, AuditEntry, Person, TimelineItem, WorkEntry, build_timeline
 from app.utils.problem_category import compose
@@ -55,6 +59,7 @@ class TicketService:
         self.tickets = TicketRepository(db)
         self.devices = DeviceRepository(db)
         self.audit = AuditService(db)
+        self.notify = Notifier(db, self.audit)
 
     # ---- report a problem -------------------------------------------------------------------
     def create(self, scope: AccessScope, data: TicketCreate) -> MaintenanceTicket:
@@ -75,6 +80,7 @@ class TicketService:
             status=TicketStatus.OPEN,
         ))
         self.audit.inserted(scope.user_id, ticket)
+        self.notify.ticket_created(scope.user_id, ticket)
         self.db.commit()
         logger.info("Ticket created id=%s device=%s", ticket.id, device.id)
         return self.get(scope, ticket.id)
@@ -172,6 +178,7 @@ class TicketService:
             raise ConflictError("Assign someone before reopening the ticket.")
         old = ticket.status
         self._set_status(scope.user_id, ticket, target)
+        self.notify.ticket_status_changed(scope.user_id, ticket, old, target)
         self.db.commit()
         logger.info("Ticket status id=%s %s -> %s", ticket.id, old.value, target.value)
         return self.get(scope, ticket.id)
@@ -198,6 +205,7 @@ class TicketService:
         self.audit.inserted(scope.user_id, assignment, organization_id=ticket.organization_id)
         if ticket.status is TicketStatus.OPEN:
             self._set_status(scope.user_id, ticket, TicketStatus.ASSIGNED)
+        self.notify.ticket_assigned(scope.user_id, ticket, user_id, assignee.role.name)
         self.db.commit()
         logger.info("Ticket assigned id=%s user=%s", ticket.id, user_id)
         return self.get(scope, ticket.id)
@@ -222,6 +230,7 @@ class TicketService:
         self.audit.updated(scope.user_id, assignment, before, organization_id=ticket.organization_id)
         if not remaining and ticket.status is TicketStatus.ASSIGNED:
             self._set_status(scope.user_id, ticket, TicketStatus.OPEN)
+            self.notify.ticket_status_changed(scope.user_id, ticket, TicketStatus.ASSIGNED, TicketStatus.OPEN)
         self.db.commit()
         logger.info("Ticket unassigned id=%s user=%s", ticket.id, user_id)
         return self.get(scope, ticket.id)

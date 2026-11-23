@@ -141,6 +141,10 @@ def seed():
         with Session() as db:  # always runs, even after a failing test
             ids = created["users"]
             if ids:
+                # B5: notifications those tickets produced - also for SEEDED staff of the hospital, who are
+                # not temporary users (the temporary users' own ones cascade with them)
+                db.execute(text("DELETE FROM notifications WHERE related_ticket_id IN "
+                                "(SELECT id FROM maintenance_tickets WHERE reported_by = ANY(:u))"), {"u": ids})
                 # B4: tickets the temporary users reported (their audit rows go with the users' below)
                 db.execute(text("DELETE FROM maintenance_tickets WHERE reported_by = ANY(:u)"), {"u": ids})
                 db.execute(delete(AuditLog).where(AuditLog.user_id.in_(ids)))
@@ -288,3 +292,13 @@ def test_seeded_parts_stock_and_usage_read_through_the_api(seed):
     assert any(p["part"]["part_number"] == "PN-TUBING-001" for r in records for p in r["parts"])
     assert c.get(f"{API}/inventory/{stock[0]['id']}", headers=h["tech_other"]).status_code == 404
     assert c.get(f"{API}/inventory", headers=h["dept_icu"]).status_code == 403
+
+
+# ---- B5: notifications on seeded data (read-only) --------------------------------------
+def test_seeded_notifications_stay_private(seed):
+    """Seeded notifications belong to the seeded technician: no other user sees them."""
+    c, h = seed["client"], seed["h"]
+    ticket_id, _, _ = _seeded_ticket(seed)
+    for who in ("tech", "dept_icu", "tech_other"):
+        box = c.get(f"{API}/notifications", headers=h[who], params={"page_size": 100}).json()
+        assert all(not (n["related_ticket_id"] == ticket_id and n["type"] == "ticket_assigned") for n in box["items"]), who

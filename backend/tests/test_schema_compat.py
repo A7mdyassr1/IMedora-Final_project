@@ -23,11 +23,11 @@ EXPECTED_MAPPED = sorted([
     # B4 CP1
     "maintenance_records", "maintenance_schedules", "maintenance_tickets", "maintenance_types", "ticket_assignments",
     # B5
-    "maintenance_parts", "part_inventory", "parts",
+    "maintenance_parts", "part_inventory", "parts", "notifications",
 ])
 B4_TABLES = ["maintenance_records", "maintenance_schedules", "maintenance_tickets", "maintenance_types", "ticket_assignments",
              # B5: the same exact-name checks for the new mirrors
-             "maintenance_parts", "part_inventory", "parts"]
+             "maintenance_parts", "part_inventory", "parts", "notifications"]
 
 
 @pytest.fixture

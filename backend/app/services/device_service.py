@@ -15,6 +15,7 @@ from app.repositories.device_repository import DeviceFilters, DeviceRepository
 from app.repositories.hospital_repository import HospitalRepository
 from app.schemas.device import DeviceCreate, DeviceUpdate
 from app.services.audit_service import AuditService, snapshot
+from app.services.notification_service import Notifier
 
 logger = logging.getLogger(__name__)
 
@@ -113,9 +114,12 @@ class DeviceService:
         # Devices cannot move between hospitals here, so editing a device inside an inactive
         # hospital stays allowed (Decision 6 only blocks adding new records).
         before = snapshot(d)
+        old_status = d.status
         for field, value in changes.items():
             setattr(d, field, value)
         self.audit.updated(scope.user_id, d, before)
+        # B5: department users of the device hear when it goes out of / back into service
+        Notifier(self.db, self.audit).device_status_changed(scope.user_id, d, old_status, d.status)
         self.db.commit()
         logger.info("Device updated id=%s fields=%s by=%s", d.id, sorted(changes), scope.user_id)
         return self.get(scope, d.id)
