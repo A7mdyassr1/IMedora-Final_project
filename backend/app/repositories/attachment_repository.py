@@ -22,6 +22,17 @@ class AttachmentRepository:
         return self.db.scalar(select(Attachment).where(Attachment.id == attachment_id,
                                                        Attachment.organization_id == organization_id))
 
+    def get_for_update(self, organization_id: uuid.UUID, attachment_id: uuid.UUID) -> Optional[Attachment]:
+        """Lock the row (deletion). Re-read, so a row deleted meanwhile by someone else is None."""
+        return self.db.scalars(select(Attachment)
+                               .where(Attachment.id == attachment_id, Attachment.organization_id == organization_id)
+                               .with_for_update(of=Attachment)
+                               .execution_options(populate_existing=True)).first()
+
+    def delete(self, obj: Attachment) -> None:
+        self.db.delete(obj)
+        self.db.flush()
+
     def for_ticket(self, ticket_id: uuid.UUID) -> List[Attachment]:
         return list(self.db.scalars(select(Attachment).where(Attachment.ticket_id == ticket_id)
                                     .order_by(Attachment.created_at, Attachment.id)))

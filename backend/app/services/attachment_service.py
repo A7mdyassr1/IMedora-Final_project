@@ -20,6 +20,26 @@ Download (GET /attachments/{id}): only through the API, after the same visibilit
 parent (ticket: ticket scope; device: device scope; maintenance record: staff record scope).
 Files the backend did not store (pre-B5 rows with an external URL, missing files) are 404 - the
 API never redirects to or fetches another address.
+
+Delete (DELETE /attachments/{id}; B5 follow-up, team decision 2026-11-24):
+- Only ticket photos (the only attachments the API creates); others are 400.
+- Visibility first: an attachment whose ticket the caller cannot see is 404, as for downloads.
+- Who: engineers of the ticket's hospital and admins may delete any photo of the ticket; the
+  reporter and active assignees only the photos they uploaded themselves (403 otherwise; a
+  department user without a department gets 403 department_required, as for uploads).
+- When: as for uploads, not on deleted, closed or cancelled tickets (409) nor in inactive
+  hospitals (400) - except for ADMINS, who may always remove a photo (e.g. one that should never
+  have been uploaded, on a ticket that is already finished).
+- The ticket row is locked as for uploads, so the "at most 3" count stays exact: a deleted photo
+  frees its slot at once.
+- Order: the row and its audit row (old values) are deleted / written and COMMITTED first; the
+  file is removed only after that. If the commit fails, nothing changed (row and file remain).
+  A file that is already missing, or a row whose file IMedora never stored (external URL), is
+  simply removed from the database. If removing the file fails AFTER the commit (disk error), the
+  deletion stands - the database is authoritative - and the now unreferenced file is logged at
+  ERROR level with its storage key for manual cleanup. It can no longer be downloaded: files are
+  served only through their row. This window cannot be closed without a two-phase commit between
+  the database and the file system.
 """
 import logging
 import re
@@ -173,6 +193,56 @@ class AttachmentService:
         if a.device_id is not None:
             return scope.device_access is not DeviceAccess.NONE and DeviceRepository(self.db).get(scope, a.device_id) is not None
         return False
+
+    # ---- delete -------------------------------------------------------------------------------------
+    def _check_delete(self, scope: AccessScope, a: Attachment, ticket: Optional[MaintenanceTicket]) -> None:
+        if ticket is None:
+            raise NotFoundError("Attachment not found.")
+        if scope.is_admin:
+            return  # admins may always remove a photo (privacy), whatever the ticket's state
+        if scope.role is Role.DEPARTMENT_USER:
+            scope.require_device_access()
+        facts = self._facts(ticket)
+        works_on_it = ticket.reported_by == scope.user_id or is_active_assignee(scope, facts)
+        if not (manages(scope, facts) or (works_on_it and a.uploaded_by == scope.user_id)):
+            raise ForbiddenError("Only the person who added this photo, the hospital's engineers and administrators "
+                                 "can delete it.")
+        if ticket.is_deleted:
+            raise ConflictError("Deleted tickets cannot be modified.")
+        if ticket.status in TERMINAL:
+            raise ConflictError("Photos of closed or cancelled tickets can only be removed by an administrator.")
+        if not self.db.get(Hospital, ticket.hospital_id).is_active:
+            raise BadRequestError("Hospital is inactive; its attachments cannot be changed.")
+
+    def delete(self, scope: AccessScope, attachment_id: uuid.UUID) -> None:
+        a = self.repo.get(scope.organization_id, attachment_id)
+        if a is None or not self._visible(scope, a):
+            raise NotFoundError("Attachment not found.")
+        if a.ticket_id is None:
+            raise BadRequestError("Only ticket photos can be deleted.")
+        # lock order as for uploads: ticket row first (keeps the per-ticket count exact), then the row
+        ticket = self.tickets.get_for_update(scope, a.ticket_id, include_deleted=scope.is_admin)
+        self._check_delete(scope, a, ticket)
+        a = self.repo.get_for_update(scope.organization_id, attachment_id)
+        if a is None:  # deleted by someone else while we waited for the lock
+            raise NotFoundError("Attachment not found.")
+        scheme, _, key = (a.file_url or "").partition(":")
+        ticket_id = a.ticket_id
+        try:
+            self.audit.deleted(scope.user_id, a)
+            self.repo.delete(a)
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()  # nothing changed: the row and its file both remain
+            raise
+        logger.info("Attachment deleted id=%s ticket=%s by=%s", attachment_id, ticket_id, scope.user_id)
+        if scheme != self.storage.scheme:
+            return  # IMedora never stored this file (pre-B5 external URL): nothing to remove
+        try:
+            self.storage.delete(key)  # a file that is already missing is not an error
+        except Exception:
+            logger.error("Attachment row deleted but its file could not be removed: orphaned storage key %s "
+                         "(attachment %s); remove it manually", key, attachment_id, exc_info=True)
 
     def download(self, scope: AccessScope, attachment_id: uuid.UUID) -> StoredFile:
         a = self.repo.get(scope.organization_id, attachment_id)

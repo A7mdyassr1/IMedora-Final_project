@@ -271,12 +271,14 @@ Nobody is notified of their own action; inactive or deleted users are skipped; t
 | `POST /api/v1/tickets/{id}/attachments` | the reporter, active assignees, engineer (own hospital), admin | `multipart/form-data`, one `file`. JPEG or PNG only, recognised from the content (415 `unsupported_file`); at most `MAX_UPLOAD_MB` (413 `file_too_large`); at most 3 per ticket (409 `attachment_limit_reached`) |
 | `GET /api/v1/tickets/{id}/attachments` | anyone who can see the ticket | Also included in every ticket detail as `attachments` |
 | `GET /api/v1/attachments/{id}` | anyone who can see the parent | The file itself (`nosniff`, `no-store`) |
+| `DELETE /api/v1/attachments/{id}` | engineer (own hospital), admin: any photo of the ticket; the reporter and active assignees: their own photos | `204`. Removes the record and the stored file, is audited, and frees the photo's slot in the limit of 3. Not on closed, cancelled or deleted tickets (409) nor in inactive hospitals (400), except for administrators (e.g. removing a photo that should never have been uploaded). Not visible to the caller: 404 |
 
 - **Privacy:** location (GPS) and all other EXIF / XMP / text metadata are removed by re-encoding; the photo's orientation is applied first. Files are private: `file_url` in the database is an internal storage key, never a public address, and files are served only through the API after the visibility check.
 - **Storage:** `STORAGE_BACKEND=local`, `STORAGE_DIR` (default `<repo>/storage/attachments`, git-ignored). **Back this folder up together with the database.** Keys are random; names are kept only for display.
 - **Consistency:** the file is written first, then the row and its audit row are committed; on any failure the file is deleted again. The count of 3 is checked with the ticket row locked.
 - Oversized uploads are refused before their body is read when the request announces its size. In production, also cap the request size at the reverse proxy.
 - Not on closed, cancelled or deleted tickets, nor in inactive hospitals. Rows written before B5 (seed data with an external URL) are listed, but their file is never fetched or redirected to (404).
+- **Deleting:** the record and its audit row are committed first; the file is removed only afterwards. A failed commit changes nothing. A file that is already missing (or never stored by IMedora) does not block the deletion. If the file cannot be removed after the commit (disk error), the deletion stands and the now unreferenced file is logged at ERROR level with its storage key (`orphaned storage key …`) for manual cleanup; it can no longer be downloaded.
 
 ## Planned API Domains
 
@@ -327,4 +329,5 @@ Nobody is notified of their own action; inactive or deleted users are skipped; t
   - **Checkpoint 2:** parts used on maintenance records, row-locked, through the database trigger; usage report.
   - **Checkpoint 3:** in-app notifications for ticket and device events; the mobile app's three notification endpoints.
   - **Checkpoint 4:** ticket photos (Decision 5): storage interface, local disk, content checks, metadata removal, limit of 3.
+  - **Follow-up:** deleting ticket photos (`DELETE /attachments/{id}`), team decision 2026-11-24.
   - No schema change and no migration.

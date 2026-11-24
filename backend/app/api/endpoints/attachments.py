@@ -1,5 +1,6 @@
-"""Attachment downloads (B5 CP4, Decision 5): files are private and leave the server only here,
-after authentication and the same visibility check as their ticket / device / record."""
+"""Attachment downloads (B5 CP4, Decision 5) and deletion (B5 follow-up): files are private and leave
+the server only here, after authentication and the same visibility check as their ticket / device /
+record."""
 import uuid
 from urllib.parse import quote
 
@@ -27,3 +28,18 @@ def download_attachment(attachment_id: uuid.UUID, user: User = CurrentUser, db: 
         "X-Content-Type-Options": "nosniff",
         "Cache-Control": "private, no-store",
     })
+
+
+@router.delete(
+    "/attachments/{attachment_id}", status_code=204, summary="Delete a ticket photo",
+    description=(
+        "Engineers of the ticket's hospital and administrators: any photo of the ticket; the reporter and "
+        "active assignees: only the photos they added. Not on closed, cancelled or deleted tickets (409) nor "
+        "in inactive hospitals (400), except for administrators. Removes the record and the stored file, "
+        "is audited, and frees the photo's slot in the limit of 3 per ticket. 404 when the attachment is "
+        "not visible to the caller."
+    ),
+)
+def delete_attachment(attachment_id: uuid.UUID, user: User = CurrentUser, db: Session = Depends(get_db)):
+    AttachmentService(db).delete(scope_for(user), attachment_id)
+    return Response(status_code=204)
