@@ -362,7 +362,36 @@ Decision 7: the AI service will read hospital data only by calling this API back
 - **The guard:** `get_current_user`, which every signed-in endpoint uses, refuses a read-only token on any method other than GET / HEAD / OPTIONS: `403 read_only_token`, before the endpoint runs.
   - A token that is invalid in any other way is still 401.
   - GET requests see exactly what the user sees (same scope).
-- **Issued by** `create_ai_token()` (`app/core/security.py`). No endpoint hands it out yet: the `/ai/chat` proxy (B9 CP2) will, once the AI service's HTTP contract is agreed.
+- **Issued by** `create_ai_token()` (`app/core/security.py`), only for the AI service, by `/ai/chat` (below).
+
+## AI assistant (B9 CP2)
+
+`POST /ai/chat` `{question, device_id?, history?}` answers `{text, follow_ups, source_type, data_available}`.
+- **Who:** every signed-in role (team decision 2026-11-26).
+- **Contracts:**
+  - `docs/api/mobile-contract.md` §4.5 (the app);
+  - `docs/api/ai-service-contract.md` (the AI service, a proposal for the AI owner).
+
+**How it works (Decision 7):**
+1. A `device_id` must be a device the caller can see (403 `department_required` / 404), checked before anything is sent.
+2. The backend issues the caller's read-only AI token (above) and releases its database connection.
+3. It calls `POST {AI_SERVICE_URL}/v1/chat` with `X-API-Key: AI_SERVICE_API_KEY`, the question, the history, the caller's role and the token.
+4. The AI service reads data only by calling this API back with that token: same scope as the user, no writes, no chat-in-chat.
+
+**Errors:**
+- `503 ai_unavailable`: `AI_SERVICE_URL` is unset (the assistant is off), or the AI service is unreachable, slower than `AI_SERVICE_TIMEOUT_SECONDS` (default 30) or answering 5xx.
+- `502 ai_bad_response`: the AI service answered anything else.
+- The AI service's own text never reaches the client.
+
+**Limits (422 above them; each is a setting):** question `AI_QUESTION_MAX_CHARS` 2,000; history `AI_HISTORY_MAX_MESSAGES` 20 of `AI_HISTORY_MESSAGE_MAX_CHARS` 4,000.
+
+**Client rules:**
+- no redirects followed;
+- no proxy settings taken from the environment;
+- reply at most 256 KiB, checked field by field;
+- `AI_SERVICE_API_KEY` is required whenever `AI_SERVICE_URL` is set.
+
+**Logs:** metadata only (user, role, sizes, outcome, duration). Never the question, history, answer, token or key. No audit row (a chat changes no data).
 
 ## Planned API Domains
 
@@ -432,5 +461,6 @@ Decision 7: the AI service will read hospital data only by calling this API back
   - No schema change and no migration.
 - **B9 (AI proxy)** on `feature/backend-b9-jana`, in progress (plan `B9_PLAN.md`):
   - **Checkpoint 1:** the read-only AI token and its guard (Decision 7, conditions 1 and 4; the guard deferred from B3.1).
-  - **Checkpoints 2–4** (the `/ai/chat` proxy, the data endpoints for the AI service, the cross-scope and prompt-injection tests) wait for the AI service's HTTP contract.
+  - **Checkpoint 2:** `POST /ai/chat` proxy, built against the proposed AI service contract (`docs/api/ai-service-contract.md`, team decisions 2026-11-26).
+  - **Checkpoints 3–4** (the data endpoints for `BackendDataProvider`; cross-scope and prompt-injection tests against the real AI service) need the AI owner.
   - No schema change and no migration.

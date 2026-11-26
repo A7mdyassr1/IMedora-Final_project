@@ -7,9 +7,9 @@ database URL is a SecretStr so it can never leak through repr()/logs.
 """
 from functools import lru_cache
 from pathlib import Path
-from typing import List, Literal
+from typing import List, Literal, Optional
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # backend/app/core/config.py -> parents[3] is the repository root
@@ -59,6 +59,16 @@ class Settings(BaseSettings):
     storage_dir: Path = REPO_ROOT / "storage" / "attachments"
     max_upload_mb: int = Field(default=5, ge=1, le=50)
 
+    # AI assistant proxy (B9, Decision 7). The AI service runs on the internal network; the backend
+    # authenticates to it with AI_SERVICE_API_KEY. Unset AI_SERVICE_URL = the assistant is off (503).
+    ai_service_url: Optional[str] = None                      # e.g. http://ai:8100
+    ai_service_api_key: Optional[SecretStr] = None            # required when AI_SERVICE_URL is set
+    ai_service_timeout_seconds: float = Field(default=30, ge=1, le=120)
+    # Limits of POST /ai/chat (team decision 2026-11-26).
+    ai_question_max_chars: int = Field(default=2000, ge=1, le=10000)
+    ai_history_max_messages: int = Field(default=20, ge=0, le=100)
+    ai_history_message_max_chars: int = Field(default=4000, ge=1, le=20000)
+
     @field_validator("log_level", mode="before")
     @classmethod
     def _upper_log_level(cls, value):
@@ -77,6 +87,22 @@ class Settings(BaseSettings):
         if len(value.get_secret_value()) < 32:
             raise ValueError("JWT_SECRET_KEY must be at least 32 characters (see .env.example)")
         return value
+
+    @field_validator("ai_service_url", mode="before")
+    @classmethod
+    def _http_url(cls, value):
+        if isinstance(value, str):
+            value = value.strip().rstrip("/") or None
+        if value is not None and not value.startswith(("http://", "https://")):
+            raise ValueError("AI_SERVICE_URL must start with http:// or https://")
+        return value
+
+    @model_validator(mode="after")
+    def _ai_key_with_url(self):
+        # Decision 7: the backend always authenticates to the AI service; never call it without a key.
+        if self.ai_service_url and not (self.ai_service_api_key and self.ai_service_api_key.get_secret_value()):
+            raise ValueError("AI_SERVICE_API_KEY is required when AI_SERVICE_URL is set")
+        return self
 
     @property
     def max_upload_bytes(self) -> int:

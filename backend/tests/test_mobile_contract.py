@@ -83,6 +83,7 @@ MOBILE_MODELS = {
         "isRead": ("NotificationResponse", "is_read", False), "createdAt": ("NotificationResponse", "created_at", False),
         "readAt": ("NotificationResponse", "read_at", True),
     },
+    "AiReply": {"text": ("AiChatResponse", "text", False), "followUps": ("AiChatResponse", "follow_ups", False)},  # B9
 }
 
 # Not "required" in OpenAPI (pydantic default_factory=list) but always serialized, at worst as []:
@@ -96,6 +97,7 @@ MOBILE_CALLS = [
     ("get", "/tickets/{ticket_id}"), ("post", "/tickets/{ticket_id}/attachments"),
     ("get", "/attachments/{attachment_id}"),
     ("get", "/notifications"), ("patch", "/notifications/{notification_id}/read"), ("post", "/notifications/read-all"),
+    ("post", "/ai/chat"),                                                                          # B9
 ]
 
 
@@ -116,11 +118,13 @@ def _check(body, model, nullable_ok=True):
 # ---- 0. the Dart source (mobile/, read only) -------------------------------------------------------------------
 MOBILE_FEATURES = Path(__file__).resolve().parents[2] / "mobile" / "lib" / "features"
 DART_FILES = {"auth": "auth/domain/auth_user.dart", "device": "devices/domain/device.dart",
-              "ticket": "tickets/domain/ticket.dart", "notification": "notifications/domain/notification.dart"}
+              "ticket": "tickets/domain/ticket.dart", "notification": "notifications/domain/notification.dart",
+              "ai": "ai_assistant/domain/ai_assistant_service.dart", "chat": "ai_assistant/domain/chat_message.dart"}
 # contract model -> (Dart file, Dart class)
 DART_CLASSES = {"AuthSession": ("auth", "AuthSession"), "AuthUser": ("auth", "AuthUser"), "Device": ("device", "Device"),
                 "Ticket": ("ticket", "Ticket"), "TicketUpdate": ("ticket", "TicketUpdate"),
-                "TicketAttachment": ("ticket", "TicketAttachment"), "AppNotification": ("notification", "AppNotification")}
+                "TicketAttachment": ("ticket", "TicketAttachment"), "AppNotification": ("notification", "AppNotification"),
+                "AiReply": ("ai", "AiReply")}
 
 
 def _dart(key):
@@ -200,6 +204,18 @@ def test_enums_match_the_dart_enums(app):
     assert set(create["required"]) == {"device_id", "category", "description"}       # priority optional
     assert set(create["properties"]) == {"device_id", "category", "description", "priority"}
     assert set(schemas["LoginRequest"]["required"]) == {"identifier", "password"}
+
+
+def test_the_ai_request_matches_the_dart_request(app):
+    """B9: `AiRequest{question, deviceId, history}` -> `AiChatRequest{question, device_id, history}`; each
+    history item is the app's ChatMessage, of which the API reads `role` (user / assistant) and `text`."""
+    schemas = app.openapi()["components"]["schemas"]
+    request, message = schemas["AiChatRequest"], schemas["AiChatMessage"]
+    assert {_snake(f) for f in _dart_fields(_dart("ai"), "AiRequest")} == set(request["properties"])
+    assert request["required"] == ["question"]
+    assert {"role", "text"} <= _dart_fields(_dart("chat"), "ChatMessage")
+    assert set(message["properties"]) == {"role", "text"}
+    assert set(message["properties"]["role"]["enum"]) == {_snake(v) for v in _dart_enum(_dart("chat"), "ChatRole")}
 
 
 # ---- 2. the app's flow against PostgreSQL --------------------------------------------------------------------

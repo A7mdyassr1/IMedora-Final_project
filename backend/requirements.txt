@@ -24,4 +24,4 @@ Pillow==13.0.0            # checks JPEG / PNG from the content and removes EXIF 
 
 # testing
 pytest==8.4.2
-httpx==0.28.1             # used by FastAPI's TestClient
+httpx==0.28.1             # the AI service client (B9) and FastAPI's TestClient

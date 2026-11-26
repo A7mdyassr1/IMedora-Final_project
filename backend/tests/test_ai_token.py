@@ -107,20 +107,21 @@ def test_the_sweep_sees_public_and_signed_in_endpoints_correctly(app):
     assert get_current_user.__name__ == "get_current_user"  # the dependency the sweep relies on
 
 
-def _audit_rows():
+def _audit_rows(org):
+    """Audit rows of the test's own organization (other suites may run against the same database)."""
     with get_session_factory()() as db:
-        return db.scalar(text("SELECT count(*) FROM audit_logs"))
+        return db.scalar(text("SELECT count(*) FROM audit_logs WHERE organization_id = :o"), {"o": org})
 
 
 def test_every_write_endpoint_refuses_the_ai_token(app, client, world):
     writes = [(m, p) for m, p in _signed_in_routes(app) if m not in READ_METHODS]
     assert len(writes) > 40 and ("POST", f"{API}/tickets") in writes  # the sweep really covers the API
-    headers, before = _ai(world["admin"]), _audit_rows()
+    headers, before = _ai(world["admin"]), _audit_rows(world["org"])
     for method, path in writes:
         r = client.request(method, path, headers=headers, json={})
         assert r.status_code == 403, (method, path, r.status_code, r.text)
         assert r.json()["error"]["code"] == "read_only_token", (method, path, r.text)
-    assert _audit_rows() == before                                    # nothing was written anywhere
+    assert _audit_rows(world["org"]) == before                         # nothing was written
 
 
 def test_the_users_own_token_is_not_affected(client, world):

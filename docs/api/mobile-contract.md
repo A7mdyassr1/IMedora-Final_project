@@ -39,7 +39,8 @@ Every error has one shape:
 | 404 | `not_found` | `NotFoundFailure` (unknown QR code, ticket, notification…) |
 | 409 / 413 / 415 | `attachment_limit_reached`, `file_too_large`, `unsupported_file`, … | `Failure(message)` |
 | 422 | `validation_error`, `constraint_violation` | `Failure(message)` |
-| 503 | `database_unavailable` | `NetworkFailure` |
+| 502 | `ai_bad_response` (AI assistant only) | `Failure(message)` |
+| 503 | `database_unavailable`, `ai_unavailable` | `NetworkFailure` |
 | no response | — | `NetworkFailure` |
 
 The `message` text is written to be shown to the user.
@@ -64,7 +65,7 @@ The `message` text is written to be shown to the user.
 | `NotificationRepository.getNotifications()` | `GET /notifications` | Newest first. Also returns `unread_count` for the badge. |
 | `NotificationRepository.markAsRead(id)` | `PATCH /notifications/{id}/read` | Returns the notification. Another user's notification gives 404. |
 | `NotificationRepository.markAllAsRead()` | `POST /notifications/read-all` | Returns `{"updated": n}` |
-| `AiAssistantService.ask()` | `POST /ai/chat` | **Not available yet:** roadmap phase B9 (AI proxy). Keep the mock until then. |
+| `AiAssistantService.ask(request)` | `POST /ai/chat` `{"question", "device_id"?, "history"?}` | Every signed-in role. `device_id` = `AiRequest.deviceId` (a device the user can see, else 404). `history` items are `{"role": "user" \| "assistant", "text"}` (other `ChatMessage` fields are ignored). Limits: question 2,000 characters, history 20 messages of 4,000 (422 above). **503 `ai_unavailable`** when the assistant is off or unreachable (maps to `NetworkFailure`, which the app already handles). See §4.5. (B9) |
 
 ## 4. Field mapping (Dart ← JSON)
 
@@ -142,9 +143,21 @@ Extra fields the app can ignore: `reported_by`, `assignees`, `hospital_id`, `is_
 | `createdAt` | `created_at` | |
 | `readAt` | `read_at` | nullable; never null when `is_read` is true |
 
+### 4.5 `AiReply` (B9)
+
+| Dart | JSON | Notes |
+|---|---|---|
+| `text` | `text` | the answer, ready to show |
+| `followUps` | `follow_ups` | suggested next questions, may be `[]` |
+
+Also returned, for showing how far to trust the answer:
+- `source_type`: `structured_data`, `general_knowledge`, `rag_document`, `mixed` or `unavailable`;
+- `data_available`: `false` when the answer says the data does not exist.
+
+The app never talks to the AI service and never holds an AI key. The backend's side of the AI service is described in [`ai-service-contract.md`](ai-service-contract.md).
+
 ## 5. Not covered by this contract
 
-- **`POST /ai/chat`:** phase B9.
 - **Push notifications:** none; notifications are in-app only (poll `GET /notifications`).
 - **Settings:** theme and notification preferences stay on the device (Master Instructions §5).
 - **Running the app against the API on an emulator:** done by the mobile team. The backend side of the same flow is replayed by `test_the_mobile_flow`.
