@@ -350,6 +350,20 @@ The Flutter app's requirements (Master Instructions section 5, `mobile/lib/featu
 - **Forgot password:** `POST /auth/forgot-password` `{email}` (or `identifier`), no sign-in. Every well-formed request gets `202` with the same message; the request is processed **after** the answer is sent (own session), so neither the answer nor its timing shows whether the account exists. IMedora has no e-mail service: for an account that can sign in, the organization's admins get one in-app `password_reset_requested` notification (not repeated while unread) and set a new password with `POST /users/{id}/reset-password`. Unknown or blocked accounts: nothing is stored. Audited (no actor). The account row is locked `FOR NO KEY UPDATE` (requests for two admins at once cannot deadlock). Limits: an organization's only admin cannot be helped this way (nobody else to notify); not rate limited (limit it at the reverse proxy).
 - **Device picker:** `GET /devices?q=` matches the device name, device code, serial number, QR identifier **and department name** (case-insensitive), inside the caller's scope.
 
+## Read-only AI token (B9 CP1)
+
+Decision 7: the AI service will read hospital data only by calling this API back **as the requesting user**, with a token the backend gives it for one chat request.
+
+- **The token:** a normal token of that user plus `"scp": "read"`.
+  - It lives `AI_TOKEN_EXPIRE_MINUTES` (default 5, at most 15).
+  - It always carries the password stamp.
+  - It stops working, like any token, after a password change or reset, or when the user, their hospital or their organization is deactivated.
+  - Tokens from login carry no `scp`. Any other `scp` value is rejected (401).
+- **The guard:** `get_current_user`, which every signed-in endpoint uses, refuses a read-only token on any method other than GET / HEAD / OPTIONS: `403 read_only_token`, before the endpoint runs.
+  - A token that is invalid in any other way is still 401.
+  - GET requests see exactly what the user sees (same scope).
+- **Issued by** `create_ai_token()` (`app/core/security.py`). No endpoint hands it out yet: the `/ai/chat` proxy (B9 CP2) will, once the AI service's HTTP contract is agreed.
+
 ## Planned API Domains
 
 - Authentication
@@ -415,4 +429,8 @@ The Flutter app's requirements (Master Instructions section 5, `mobile/lib/featu
   - **Checkpoint 1:** `token` in the login response; `POST /auth/forgot-password` (admins notified in-app).
   - **Checkpoint 2:** the device picker's `q` also matches the department name.
   - **Checkpoint 3:** `docs/api/mobile-contract.md` and `tests/test_mobile_contract.py`.
+  - No schema change and no migration.
+- **B9 (AI proxy)** on `feature/backend-b9-jana`, in progress (plan `B9_PLAN.md`):
+  - **Checkpoint 1:** the read-only AI token and its guard (Decision 7, conditions 1 and 4; the guard deferred from B3.1).
+  - **Checkpoints 2–4** (the `/ai/chat` proxy, the data endpoints for the AI service, the cross-scope and prompt-injection tests) wait for the AI service's HTTP contract.
   - No schema change and no migration.

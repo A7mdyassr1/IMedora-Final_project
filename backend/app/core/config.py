@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     jwt_algorithm: Literal["HS256", "HS384", "HS512"] = "HS256"
     # Default = one 8-hour hospital shift (Decision 2). Configurable via ACCESS_TOKEN_EXPIRE_MINUTES.
     access_token_expire_minutes: int = Field(default=480, ge=1, le=1440)
+    # Decision 7 (B9): the read-only token the backend gives the AI service for one chat request.
+    # "Short-lived, about 5 minutes"; capped at 15 so a misconfiguration cannot make it long-lived.
+    ai_token_expire_minutes: int = Field(default=5, ge=1, le=15)
 
     db_pool_size: int = Field(default=5, ge=1)
     db_max_overflow: int = Field(default=10, ge=0)

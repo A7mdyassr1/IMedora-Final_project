@@ -7,7 +7,9 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_session_factory
 from app.core.exceptions import BadRequestError, UnauthorizedError
-from app.core.security import create_access_token, decode_token, dummy_hash, hash_password, stamp_matches, verify_password
+from app.core.security import (
+    TokenClaims, create_access_token, decode_token, dummy_hash, hash_password, stamp_matches, verify_password,
+)
 from app.models.user import User
 from app.repositories.hospital_repository import HospitalRepository
 from app.repositories.user_repository import UserRepository
@@ -81,9 +83,13 @@ class AuthService:
         logger.info("Password reset requested user_id=%s admins_notified=%s", user.id, sent)
 
     def user_for_token(self, token: str) -> User:
+        return self.authenticate(token)[0]
+
+    def authenticate(self, token: str) -> Tuple[User, TokenClaims]:
         """Every authenticated request: valid signature and expiry, the user still exists, the
         account is usable (user, organization, hospital active) and the password is unchanged
-        since the token was issued (password stamp). Any failure is the same 401."""
+        since the token was issued (password stamp). Any failure is the same 401. Also returns the
+        claims, so the caller can apply the read-only rule of the AI token (Decision 7)."""
         claims = decode_token(token)
         # Re-read on every request so deactivation / role changes take effect immediately.
         user = self.users.get_by_id(claims.user_id)
@@ -95,7 +101,7 @@ class AuthService:
         if reason is not None:
             logger.info("Token rejected (%s) user_id=%s", reason, user.id)
             raise UnauthorizedError(_BAD_TOKEN)
-        return user
+        return user, claims
 
     def change_password(self, user: User, current_password: str, new_password: str) -> None:
         if not verify_password(current_password, user.password_hash):

@@ -59,10 +59,25 @@ def stamp_matches(token_stamp: Optional[str], password_hash: str) -> bool:
     return hmac.compare_digest(token_stamp.encode(), password_stamp(password_hash).encode())
 
 
+# ---- read-only AI token (Decision 7, B9) -------------------------------------------------
+# For one chat request the backend gives the AI service a token of the requesting user that can
+# only READ, through the normal endpoints and their scope checks (conditions 1, 2 and 4). It is a
+# normal token plus `scp = "read"`, with a short lifetime and a mandatory password stamp. Tokens
+# from login carry no `scp`. Any other `scp` value is rejected, so a future scope can never be
+# mistaken for a full token by this code.
+SCOPE_CLAIM = "scp"
+READ_ONLY_SCOPE = "read"
+
+
 @dataclass(frozen=True)
 class TokenClaims:
     user_id: uuid.UUID
     password_stamp: Optional[str]
+    scope: Optional[str] = None  # None = a normal (full) token; READ_ONLY_SCOPE = the AI token
+
+    @property
+    def read_only(self) -> bool:
+        return self.scope == READ_ONLY_SCOPE
 
 
 def create_access_token(user_id: uuid.UUID, password_hash: Optional[str] = None) -> Tuple[str, int]:
@@ -79,6 +94,18 @@ def create_access_token(user_id: uuid.UUID, password_hash: Optional[str] = None)
     return token, s.access_token_expire_minutes * 60
 
 
+def create_ai_token(user_id: uuid.UUID, password_hash: str) -> Tuple[str, int]:
+    """The read-only token of `user_id` for the AI service (Decision 7). Returns (token,
+    expires_in_seconds). The password stamp is mandatory: a password change or reset invalidates
+    it like any other token, and deactivation does too (checked on every request)."""
+    s = get_settings()
+    now = datetime.now(timezone.utc)
+    claims = {"sub": str(user_id), "iat": now, "exp": now + timedelta(minutes=s.ai_token_expire_minutes),
+              STAMP_CLAIM: password_stamp(password_hash), SCOPE_CLAIM: READ_ONLY_SCOPE}
+    token = jwt.encode(claims, s.jwt_secret_key.get_secret_value(), algorithm=s.jwt_algorithm)
+    return token, s.ai_token_expire_minutes * 60
+
+
 def decode_token(token: str) -> TokenClaims:
     s = get_settings()
     try:
@@ -89,7 +116,11 @@ def decode_token(token: str) -> TokenClaims:
             options={"require": ["exp", "sub"]},
         )
         stamp = payload.get(STAMP_CLAIM)
-        return TokenClaims(user_id=uuid.UUID(payload["sub"]), password_stamp=stamp if isinstance(stamp, str) else None)
+        scope = payload.get(SCOPE_CLAIM)
+        if scope is not None and scope != READ_ONLY_SCOPE:
+            raise ValueError("unknown token scope")
+        return TokenClaims(user_id=uuid.UUID(payload["sub"]), password_stamp=stamp if isinstance(stamp, str) else None,
+                           scope=scope)
     except (jwt.PyJWTError, ValueError, KeyError, TypeError):
         raise UnauthorizedError("Invalid or expired token.")
 
