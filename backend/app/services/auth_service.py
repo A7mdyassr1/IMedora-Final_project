@@ -1,4 +1,5 @@
 import logging
+import traceback
 from typing import Optional, Tuple
 
 from sqlalchemy import select
@@ -110,9 +111,16 @@ class AuthService:
 def process_password_reset_request(identifier: str) -> None:
     """Background task of POST /auth/forgot-password, run after the response is sent, in its own
     session: the response (status, body and time) is then the same whether or not the account exists.
-    Failures are logged only: the caller already has the generic answer."""
+    Failures are logged only: the caller already has the generic answer.
+
+    Not logger.exception: a database error's text carries the query's parameters and PostgreSQL's own
+    message, which here hold the typed email (B8 review R1). Logged instead: the error type, its
+    SQLSTATE and the stack, which identify the failure without the value."""
     try:
         with get_session_factory()() as db:
             AuthService(db).request_password_reset(identifier)
-    except Exception:  # noqa: BLE001 - nobody is waiting for this result
-        logger.exception("Password reset request could not be processed")
+    except Exception as exc:  # noqa: BLE001 - nobody is waiting for this result
+        sqlstate = getattr(getattr(exc, "orig", None), "pgcode", None)
+        logger.error("Password reset request could not be processed (%s%s)\n%s", type(exc).__name__,
+                     f", SQLSTATE {sqlstate}" if sqlstate else "",
+                     "".join(traceback.format_tb(exc.__traceback__)).rstrip())

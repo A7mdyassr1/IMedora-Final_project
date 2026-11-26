@@ -195,3 +195,56 @@ def test_the_answer_does_not_wait_for_the_processing(client, world, monkeypatch,
     assert (r.status_code, r.json()["message"]) == (202, FORGOT_PASSWORD_MESSAGE)
     assert "Password reset request could not be processed" in caplog.text
     assert world["staff"] not in caplog.text                     # the typed identifier is never logged
+
+
+# ---- B8 final review ------------------------------------------------------------------------------------
+def test_a_database_error_does_not_log_the_typed_email(client, world, monkeypatch, caplog):
+    """B8 review R1: a database error's text carries the query's parameters, here the typed email.
+    The failure is logged by type, SQLSTATE and stack only, never with that text."""
+    from app.repositories.user_repository import UserRepository
+
+    def failing_lookup(self, email):  # a statement-level failure whose parameters hold the typed value
+        return self.db.execute(text("SELECT CAST(:typed AS integer)"), {"typed": email.strip().lower()}).scalar()
+
+    monkeypatch.setattr(UserRepository, "get_by_email", failing_lookup)
+    typed = "Somebody.Typed@b2.test"
+    with caplog.at_level(logging.INFO):
+        r = _forgot(client, typed)
+    assert (r.status_code, r.json()["message"]) == (202, FORGOT_PASSWORD_MESSAGE)
+    logged = caplog.text + "".join(rec.exc_text or "" for rec in caplog.records)
+    assert "Password reset request could not be processed (DataError, SQLSTATE 22P02)" in logged
+    assert "failing_lookup" in logged                                  # the stack is kept for diagnosis
+    assert typed.lower() not in logged.lower()
+
+
+def test_the_answer_is_sent_before_the_request_is_processed(app, monkeypatch):
+    """B8 review R2: TestClient runs background tasks before it returns, so it cannot show the order. At
+    the ASGI level: when the processing starts, the complete 202 response has already been sent."""
+    import asyncio
+    import json
+
+    from app.api.endpoints import auth as auth_endpoint
+
+    sent, seen_by_processing = [], []
+    monkeypatch.setattr(auth_endpoint, "process_password_reset_request",
+                        lambda identifier: seen_by_processing.append((identifier, list(sent))))
+    body = json.dumps({"email": "someone@b2.test"}).encode()
+    scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": "POST", "scheme": "http",
+             "path": f"{API}/auth/forgot-password", "raw_path": f"{API}/auth/forgot-password".encode(),
+             "query_string": b"", "root_path": "", "client": ("127.0.0.1", 50000), "server": ("testserver", 80),
+             "headers": [(b"host", b"testserver"), (b"content-type", b"application/json"),
+                         (b"content-length", str(len(body)).encode())]}
+    incoming = [{"type": "http.request", "body": body, "more_body": False}]
+
+    async def receive():
+        return incoming.pop(0) if incoming else {"type": "http.disconnect"}
+
+    async def send(message):
+        if message["type"] == "http.response.start":
+            sent.append(("start", message["status"]))
+        elif message["type"] == "http.response.body":
+            sent.append(("body", message.get("more_body", False), json.loads(message["body"])["message"]))
+
+    asyncio.run(app(scope, receive, send))
+    assert seen_by_processing == [("someone@b2.test",
+                                   [("start", 202), ("body", False, FORGOT_PASSWORD_MESSAGE)])]
