@@ -53,6 +53,20 @@ def get_db() -> Iterator[Session]:
         db.close()
 
 
+def start_snapshot_read(db: Session) -> None:
+    """Ends the session's current transaction and starts a REPEATABLE READ one: every following query
+    sees the same snapshot of the database, taken at its first statement. For reads made of several
+    queries that must agree (a total and its page, a page and the details of its rows - B6-L3).
+
+    Only for read-only requests: what ran before (authentication) only read, so ending it loses nothing,
+    and pending ORM changes are refused. The isolation level applies to this transaction only;
+    SQLAlchemy restores the default when the connection goes back to the pool."""
+    if db.new or db.dirty or db.deleted:
+        raise RuntimeError("start_snapshot_read() called with unsaved changes in the session")
+    db.rollback()
+    db.connection(execution_options={"isolation_level": "REPEATABLE READ"})
+
+
 def check_database_connection() -> None:
     """Raises a SQLAlchemyError if PostgreSQL can't be reached."""
     with get_engine().connect() as conn:

@@ -5,6 +5,10 @@ devices readable; role-first 403 for department users asking for other entry typ
 """
 import uuid
 
+from sqlalchemy import event, text
+
+from app.core.database import get_engine, get_session_factory
+
 from tests.risk_scene import rq  # noqa: F401
 from tests.scope_scene import scene  # noqa: F401
 from tests.test_devices_flow import cat  # noqa: F401
@@ -177,3 +181,42 @@ def test_scope_and_archived_devices(client, rq):
         assert [e["type"] for e in body["items"]] == ["risk_assessment"], who
     _err(_history(client, h["admin"], str(uuid.uuid4())), 404)
     assert set(client.get("/openapi.json").json()["paths"][f"{API}/devices/{{device_id}}/history"]) == {"get"}
+
+
+def test_total_and_page_come_from_one_snapshot(client, rq):
+    """B6-L3 regression. Another transaction saves a new entry AFTER the history's count query and
+    BEFORE its page query. The response must still be one consistent picture: the total, the page and
+    the entry details from the same snapshot (the new entry is simply not there yet). With two
+    independent queries the total said 2 while the page showed 3 entries."""
+    h, dev = rq["h"], rq["d"]["icu"]["id"]
+    saved = [rq["assess"](h["eng_h1"], "icu", level, assessed_at=at).json()["id"]
+             for level, at in (("low", T1), ("high", T2))]
+    fired = []
+
+    def save_between_count_and_page(conn, cursor, statement, parameters, context, executemany):
+        if fired or "count(*)" not in statement or "risk_assessments" not in statement:
+            return
+        fired.append(True)
+        with get_session_factory()() as other:      # a concurrent writer, committed at once
+            other.execute(text(
+                "INSERT INTO risk_assessments (organization_id, hospital_id, device_id, assessed_by, risk_level, assessed_at) "
+                "SELECT organization_id, hospital_id, device_id, assessed_by, 'medium', :t FROM risk_assessments WHERE id = :s"),
+                {"t": T3, "s": saved[0]})
+            other.commit()
+
+    event.listen(get_engine(), "after_cursor_execute", save_between_count_and_page)
+    try:
+        body = _history(client, h["eng_h1"], dev, types="risk_assessment", page_size=50).json()
+    finally:
+        event.remove(get_engine(), "after_cursor_execute", save_between_count_and_page)
+    assert fired == [True]
+    assert body["total"] == len(body["items"]) == 2, body
+    with get_session_factory()() as s:   # the pooled connection is back on the default isolation level
+        assert s.scalar(text("SHOW transaction_isolation")) == "read committed"
+    assert _ids(body) == [("risk_assessment", saved[1]), ("risk_assessment", saved[0])]
+
+    after = _history(client, h["eng_h1"], dev, types="risk_assessment", page_size=50).json()   # the next read sees it
+    assert after["total"] == len(after["items"]) == 3
+    assert [e["at"][:10] for e in after["items"]] == ["2026-07-01", "2026-06-01", "2026-03-01"]
+    # the response shape is unchanged
+    assert set(body) == {"items", "total", "page", "page_size"} and (body["page"], body["page_size"]) == (1, 50)

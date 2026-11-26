@@ -42,3 +42,17 @@ def test_department_users_asking_for_other_types_get_403_before_any_lookup(types
     with pytest.raises(ForbiddenError):
         DeviceHistoryService(_NoDatabase()).history(_scope(Role.DEPARTMENT_USER), uuid.uuid4(), frozenset(types),
                                                     None, None, 1, 20)
+
+
+def test_snapshot_read_refuses_unsaved_changes():
+    """B6-L3: start_snapshot_read() ends the current transaction, so it must never drop pending writes."""
+    import pytest
+    from sqlalchemy.orm import Session
+
+    from app.core.database import start_snapshot_read
+    from app.models.notification import Notification
+
+    db = Session()
+    db.add(Notification(title="x", notification_type="other"))
+    with pytest.raises(RuntimeError, match="unsaved changes"):
+        start_snapshot_read(db)

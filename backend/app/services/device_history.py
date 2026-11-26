@@ -15,6 +15,8 @@ Visibility (approved B6 plan, Revision 5, section 9.3):
   included (Decision 6: their history stays readable).
 - Order of checks: a department user who explicitly asks for an entry type they may not see gets
   403 before any lookup; without `types`, those entries are simply absent. Then the device (404).
+- Consistency (B6-L3): the whole read runs in one REPEATABLE READ snapshot, so `total`, the page
+  and each entry's details agree even while other requests write.
 - Ticket entries: `ticket_reported` (created_at) and `ticket_resolved` (resolved_at, when set).
   Closed and cancelled have no timestamp column: they show as the ticket's current status.
 """
@@ -25,6 +27,7 @@ from typing import FrozenSet, List, Optional, Sequence, Tuple
 from sqlalchemy.orm import Session
 
 from app.core.access import AccessScope
+from app.core.database import start_snapshot_read
 from app.core.exceptions import AppError, ForbiddenError, NotFoundError
 from app.core.roles import Role
 from app.repositories.device_repository import DeviceRepository
@@ -84,6 +87,7 @@ class DeviceHistoryService:
         if types is not None and not types <= allowed:              # role first, no lookup
             raise ForbiddenError("Department users can see only the tickets they reported in a device's history.")
         scope.require_device_access()                                # 403 department_required
+        start_snapshot_read(self.db)  # B6-L3: device, total, page and details from ONE snapshot
         if self.devices.get(scope, device_id) is None:               # archived devices included
             raise NotFoundError("Device not found.")
         rows, total = self.repo.page(scope, device_id, types or allowed, aware(at_from), aware(at_to), page, page_size)
