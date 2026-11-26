@@ -280,6 +280,23 @@ Nobody is notified of their own action; inactive or deleted users are skipped; t
 - Not on closed, cancelled or deleted tickets, nor in inactive hospitals. Rows written before B5 (seed data with an external URL) are listed, but their file is never fetched or redirected to (404).
 - **Deleting:** the record and its audit row are committed first; the file is removed only afterwards. A failed commit changes nothing. A file that is already missing (or never stored by IMedora) does not block the deletion. If the file cannot be removed after the commit (disk error), the deletion stands and the now unreferenced file is logged at ERROR level with its storage key (`orphaned storage key …`) for manual cleanup; it can no longer be downloaded.
 
+## Risk assessments (B6 CP1)
+
+| Endpoint | Who | Notes |
+|---|---|---|
+| `POST /api/v1/risk-assessments` | engineer (own hospital), admin | `{device_id, risk_level, notes?, assessed_at?}`. Organization, hospital and assessor are set by the server and refused if sent (422) |
+| `GET /api/v1/risk-assessments` | technician, engineer (own hospital), admin | Filters `device_id`, `hospital_id`, `risk_level`, `assessed_by`, `assessed_from` / `assessed_to`; sort `assessed_at` (default, newest first), `created_at`, `risk_level` |
+| `GET /api/v1/risk-assessments/{id}` | same | |
+| `GET /api/v1/devices/{id}/risk-assessments` | same | A device's history, newest first; archived devices included |
+| `PATCH /api/v1/risk-assessments/{id}` | engineer (own hospital), admin | Corrections: `risk_level`, `notes` (null clears), `assessed_at`. The device and the ownership fields cannot change (422). Audited |
+
+- **Order of checks:** the role first (technicians and department users get **403 on every write without any lookup**; department users get 403 on every read), then existence and scope (404), then the device's state (400).
+- **`devices.current_risk_level` is written only by the database trigger** (latest `assessed_at` wins; a backdated assessment never overrides a newer one). The backend locks the device row before every risk write so concurrent writes cannot leave a stale level, and only *reads* the level before and after the write. Responses show it in `device.current_risk_level`.
+- `assessed_at` defaults to now; never in the future (400). A second assessment of the same device at exactly the same time is refused (409 `duplicate_assessment_time`): the trigger has no tie-breaker.
+- No new assessments or corrections on archived devices or in inactive hospitals (400); their history stays readable. Decommissioned and out-of-service devices can be assessed.
+- **Audit:** every create and correction, in the same transaction. When the trigger changes a device's level, a `devices` `update` row records `{"current_risk_level": before}` → `{"current_risk_level": after, "cause": {...}}` (team decision D17).
+- No delete endpoint: assessments are history.
+
 ## Planned API Domains
 
 - Authentication
@@ -331,3 +348,5 @@ Nobody is notified of their own action; inactive or deleted users are skipped; t
   - **Checkpoint 4:** ticket photos (Decision 5): storage interface, local disk, content checks, metadata removal, limit of 3.
   - **Follow-up:** deleting ticket photos (`DELETE /attachments/{id}`), team decision 2026-11-24.
   - No schema change and no migration.
+- **B6 (risk assessments, QA records)** on `feature/backend-b6-jana` (approved plan `B6_PLAN.md`, Revision 5):
+  - **Checkpoint 1:** risk assessments; the trigger-maintained `current_risk_level` with the device row locked for every write; equal-time guard; audit of the device's level changes.
