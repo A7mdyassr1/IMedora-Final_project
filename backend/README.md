@@ -341,6 +341,13 @@ Technicians, engineers (own hospital) and administrators (organization); departm
 - **Department users** (devices of their own department only; other departments 404): only `ticket_reported` / `ticket_resolved` entries of tickets **they reported**, staff shown as roles. Asking for another type is 403 before any lookup.
 - Archived devices keep a readable history. Closed and cancelled tickets have no time of their own and show as the ticket's current status; the step-by-step story stays in the ticket timeline. Built from existing tables only.
 
+## Mobile contract (B8)
+
+The Flutter app's requirements (Master Instructions section 5, `mobile/lib/features/*/domain`) mapped to this API. The mobile app's base URL **includes `/api/v1`** (e.g. `http://10.0.2.2:8000/api/v1`; `--dart-define=API_BASE_URL=...`).
+
+- **Login:** `POST /auth/login` `{identifier, password}` answers `{token, user, ...}`. `token` is the same JWT as `access_token` (kept for existing clients). Send it as `Authorization: Bearer <token>`; `GET /auth/me` restores a stored session (401 when it is no longer valid).
+- **Forgot password:** `POST /auth/forgot-password` `{email}` (or `identifier`), no sign-in. Always `202` with the same message. IMedora has no e-mail service: for an account that can sign in, the organization's admins get one in-app `password_reset_requested` notification (not repeated while unread) and set a new password with `POST /users/{id}/reset-password`. Unknown or blocked accounts: nothing is stored. Audited (no actor).
+
 ## Planned API Domains
 
 - Authentication

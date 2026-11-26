@@ -1,6 +1,7 @@
 import logging
 from typing import Optional, Tuple
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import BadRequestError, UnauthorizedError
@@ -9,6 +10,7 @@ from app.models.user import User
 from app.repositories.hospital_repository import HospitalRepository
 from app.repositories.user_repository import UserRepository
 from app.services.audit_service import PASSWORD_CHANGED, AuditService, snapshot
+from app.services.notification_service import Notifier
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +52,25 @@ class AuthService:
         token, expires_in = create_access_token(user.id, user.password_hash)
         logger.info("User logged in user_id=%s", user.id)
         return user, token, expires_in
+
+    def request_password_reset(self, identifier: str) -> None:
+        """POST /auth/forgot-password (B8, team decision 2026-11-26). No e-mail service exists, so a
+        request for an account that can sign in notifies the organization's administrators in-app; one
+        of them sets a new password (POST /users/{id}/reset-password). Unknown or blocked accounts:
+        nothing is stored. The endpoint answers the same in every case (no account enumeration)."""
+        user = self.users.get_by_email(identifier)
+        if user is None:
+            logger.info("Password reset requested for an unknown identifier")  # never log what was typed
+            return
+        reason = self.account_block_reason(user)
+        if reason is not None:
+            logger.info("Password reset request ignored (%s) user_id=%s", reason, user.id)
+            return
+        # Serialize requests for the same account, so "already notified" is decided one at a time.
+        self.db.execute(select(User.id).where(User.id == user.id).with_for_update())
+        sent = Notifier(self.db, AuditService(self.db)).password_reset_requested(user)
+        self.db.commit()
+        logger.info("Password reset requested user_id=%s admins_notified=%s", user.id, sent)
 
     def user_for_token(self, token: str) -> User:
         """Every authenticated request: valid signature and expiry, the user still exists, the

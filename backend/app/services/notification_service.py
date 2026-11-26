@@ -22,6 +22,11 @@ and both are audited together. Only the five types the mobile app knows are prod
     device_alert           a device's status changes between active,    the device's department users (the people
                            under_maintenance and out_of_service         who use it)
 
+B8 adds one type for administrators (the mobile app shows unknown types as `other`):
+    password_reset_requested  POST /auth/forgot-password for an account  the organization's admins, except the
+                              that can sign in (no e-mail service)       account itself and admins who still have
+                                                                         an unread request for that account
+
 Rules:
 - Nobody is notified about their own action (a reporter who cancels, a technician who takes a
   ticket); the reporter's "request received" confirmation is the one exception, as in the mobile app.
@@ -57,6 +62,7 @@ TICKET_ASSIGNED = "ticket_assigned"
 TICKET_STATUS_CHANGED = "ticket_status_changed"
 TICKET_RESOLVED = "ticket_resolved"
 DEVICE_ALERT = "device_alert"
+PASSWORD_RESET_REQUESTED = "password_reset_requested"
 TYPES = (TICKET_CREATED, TICKET_ASSIGNED, TICKET_STATUS_CHANGED, TICKET_RESOLVED, DEVICE_ALERT)
 
 BIOMEDICAL_TEAM = (Role.BIOMEDICAL_ENGINEER.value, Role.TECHNICIAN.value)
@@ -110,6 +116,18 @@ class Notifier:
                 self.audit.inserted(actor_id, row)
             logger.info("Notifications type=%s ticket=%s recipients=%s", kind, ticket_id, len(rows))
         return rows
+
+    # ---- accounts (B8) ----------------------------------------------------------------------------------
+    def password_reset_requested(self, user) -> int:
+        """Somebody asked for `user`'s password to be reset (the request is not signed in: no actor).
+        Returns the number of admins notified. The texts name the account: only admins receive them."""
+        title = "Password reset requested"
+        body = (f"{user.full_name} ({user.email}) cannot sign in and asked for a password reset. "
+                "Set a new password in user management.")
+        admins = self.repo.organization_admins(user.organization_id)
+        waiting = self.repo.unread_of(PASSWORD_RESET_REQUESTED, body, admins)
+        return len(self._send(None, user.organization_id, [a for a in admins if a != user.id and a not in waiting],
+                              PASSWORD_RESET_REQUESTED, title, body))
 
     # ---- tickets ----------------------------------------------------------------------------------------
     def ticket_created(self, actor_id: uuid.UUID, ticket: MaintenanceTicket) -> None:

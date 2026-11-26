@@ -12,8 +12,9 @@ from app.utils.ticket_number import ticket_number
 
 class NotificationResponse(BaseModel):
     id: uuid.UUID
-    type: Optional[str] = Field(description="ticket_created, ticket_assigned, ticket_status_changed, ticket_resolved or "
-                                            "device_alert (older rows may hold other values or none).")
+    type: Optional[str] = Field(description="ticket_created, ticket_assigned, ticket_status_changed, ticket_resolved, "
+                                            "device_alert, or password_reset_requested for administrators (B8). "
+                                            "Older rows may hold other values or none.")
     title: str
     body: Optional[str] = None
     related_ticket_id: Optional[uuid.UUID] = None

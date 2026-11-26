@@ -11,6 +11,7 @@ from typing import Iterable, List, Optional, Tuple
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
+from app.core.roles import Role
 from app.models.notification import Notification
 from app.models.role import Role as RoleRow
 from app.models.user import User
@@ -80,3 +81,15 @@ class NotificationRepository:
     def department_users(self, organization_id: uuid.UUID, department_id: uuid.UUID, role: str) -> List[uuid.UUID]:
         return list(self.db.scalars(self._reachable(organization_id)
                                     .where(User.department_id == department_id, RoleRow.name == role)))
+
+    def organization_admins(self, organization_id: uuid.UUID) -> List[uuid.UUID]:
+        return list(self.db.scalars(self._reachable(organization_id).where(RoleRow.name == Role.ADMIN.value)))
+
+    def unread_of(self, kind: str, body: str, user_ids: Iterable[uuid.UUID]) -> set:
+        """Which of `user_ids` still have an UNREAD notification of this type and text."""
+        ids = list(user_ids)
+        if not ids:
+            return set()
+        return set(self.db.scalars(select(Notification.user_id).where(
+            Notification.user_id.in_(ids), Notification.notification_type == kind, Notification.body == body,
+            Notification.is_read.is_(False))))
