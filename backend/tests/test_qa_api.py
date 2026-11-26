@@ -7,6 +7,13 @@ Skipped unless TEST_DATABASE_URL is set; everything created here is removed (tes
 import uuid
 from datetime import date, datetime, timedelta, timezone
 
+import pytest
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import NullPool
+
+from app.core.config import get_settings
+from app.core.database import get_db
 from app.services.qa_service import QAService
 from tests.risk_scene import rq  # noqa: F401
 from tests.scope_scene import scene  # noqa: F401
@@ -127,6 +134,66 @@ def test_next_due_date_follows_the_database_date_of_the_check(client, rq):
     _err(rq["qa_update"](h["eng_h1"], rid, performed_at=T2), 422, "constraint_violation", DUE_MESSAGE)
     _err(rq["qa_update"](h["eng_h1"], rid, next_due_date=day_before), 422, "constraint_violation", DUE_MESSAGE)
     assert rq["qa_update"](h["eng_h1"], rid, performed_at=T2, next_due_date="2026-12-01").status_code == 200
+
+
+WEST_OF_UTC = "America/New_York"
+
+
+@pytest.fixture
+def west_db(client):
+    """B6-L1: every request's database session runs with a time zone WEST of UTC.
+
+    East of UTC (the default test database, Africa/Cairo) a check computed in UTC is looser than the
+    database's own date, so the CHECK constraint still answers the same 422 and a UTC-based service
+    check would go unnoticed. West of UTC the UTC date is AHEAD of the database date: a UTC-based check
+    would refuse a due date the database accepts. Yields a session factory with the same setting."""
+    engine = create_engine(get_settings().database_url.get_secret_value(), poolclass=NullPool,
+                           connect_args={"options": f"-c TimeZone={WEST_OF_UTC}"})
+    factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+
+    def west_session():
+        db = factory()
+        try:
+            yield db
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+    client.app.dependency_overrides[get_db] = west_session
+    try:
+        yield factory
+    finally:
+        client.app.dependency_overrides.pop(get_db, None)
+        engine.dispose()
+
+
+def test_next_due_date_follows_the_database_date_west_of_utc(client, rq, west_db):
+    """B6-L1 regression: 02:30 UTC on 2 March is still 1 March in New York. The rule compares with the
+    DATABASE's date of performed_at (1 March), never with the UTC date (2 March)."""
+    h = rq["h"]
+    after_utc_midnight = "2026-03-02T02:30:00+00:00"
+    with west_db() as s:
+        zone, db_date = s.execute(text("SELECT current_setting('TimeZone'), CAST(CAST(:t AS timestamptz) AS date)"),
+                                  {"t": after_utc_midnight}).one()
+    assert (zone, db_date) == (WEST_OF_UTC, date(2026, 3, 1))
+
+    # create: the database's date is accepted (a UTC-based check would answer 422 here) ...
+    r = rq["qa"](h["eng_h1"], "icu", performed_at=after_utc_midnight, next_due_date="2026-03-01")
+    assert r.status_code == 201, r.text
+    assert r.json()["next_due_date"] == "2026-03-01"
+    # ... and the day before it is still refused, with the usual 422
+    _err(rq["qa"](h["eng_h1"], "icu", performed_at=after_utc_midnight, next_due_date="2026-02-28"), 422,
+         "constraint_violation", DUE_MESSAGE)
+
+    # corrections follow the same date
+    rid = rq["qa"](h["eng_h1"], "icu", performed_at=T1, next_due_date="2026-04-01").json()["id"]
+    r = rq["qa_update"](h["eng_h1"], rid, performed_at=after_utc_midnight, next_due_date="2026-03-01")
+    assert r.status_code == 200, r.text
+    _err(rq["qa_update"](h["eng_h1"], rid, next_due_date="2026-02-28"), 422, "constraint_violation", DUE_MESSAGE)
+    stored = rq["sql"]("SELECT performed_at, next_due_date FROM qa_records WHERE id = :i", i=rid)[0]
+    assert stored == (datetime(2026, 3, 2, 2, 30, tzinfo=timezone.utc), date(2026, 3, 1))
 
 
 def test_the_check_constraint_itself_also_gives_422(client, rq, monkeypatch):
