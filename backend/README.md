@@ -313,6 +313,18 @@ Inspections, calibrations and compliance checks, in one table (`record_type`).
 - `next_due_date` must be on or after the **database's** date of `performed_at` (422 `constraint_violation`, from the pre-check or from `ck_qa_next_due_after_performed`). `performed_at` is never in the future (400).
 - Same order of checks and the same archived / inactive-hospital rules as risk assessments. A failed check creates no ticket, changes no device status and sends no notification. No delete endpoint.
 
+## Risk and QA summaries, QA due list (B6 CP3)
+
+Technicians, engineers (own hospital) and administrators (organization); department users get 403. Archived devices are left out unless an administrator sets `include_archived=true` (403 for other roles), as in the device list.
+
+| Endpoint | Returns |
+|---|---|
+| `GET /api/v1/risk-assessments/summary` | Devices per **current** risk level as kept by the database (`low`, `medium`, `high`, `critical`) plus `unassessed`; optional `hospital_id` |
+| `GET /api/v1/qa-records/summary` | All QA records in scope: `total`, `by_status`, `by_type`; optional `hospital_id` |
+| `GET /api/v1/qa-records/due` | Checks that are due: `within_days` (0–365, default 30), `include_overdue` (default `true`), `hospital_id`, `record_type`, `device_id`; soonest first; paged. Each item has `due_status` (`overdue` / `upcoming`) and `days_until_due`; the response echoes `today` (the database's date) |
+
+**Due list rule:** for each device and record type only the **latest** record counts (by `performed_at`, then creation time, then id). An older record is superseded and never listed, even if its own due date is near. The latest record's `next_due_date` decides: before today = overdue (listed when `include_overdue`); today to today + `within_days` = upcoming. Records without a next due date are not listed.
+
 ## Planned API Domains
 
 - Authentication
@@ -367,3 +379,4 @@ Inspections, calibrations and compliance checks, in one table (`record_type`).
 - **B6 (risk assessments, QA records)** on `feature/backend-b6-jana` (approved plan `B6_PLAN.md`, Revision 5):
   - **Checkpoint 1:** risk assessments; the trigger-maintained `current_risk_level` with the device row locked for every write; equal-time guard; audit of the device's level changes.
   - **Checkpoint 2:** QA records; status rules (a pass / fail result is final); the next-due-date rule checked with the database's date (422).
+  - **Checkpoint 3:** risk and QA summaries; the QA due list (latest record per device and type only).

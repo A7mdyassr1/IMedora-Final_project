@@ -22,7 +22,7 @@ from app.core.enums import RiskLevel
 from app.models.user import User
 from app.repositories.risk_repository import RiskFilters
 from app.schemas.common import Page
-from app.schemas.risk import RiskAssessmentCreate, RiskAssessmentResponse, RiskAssessmentUpdate
+from app.schemas.risk import RiskAssessmentCreate, RiskAssessmentResponse, RiskAssessmentUpdate, RiskSummaryResponse
 from app.services.risk_service import RiskService
 
 router = APIRouter(tags=["risk"])
@@ -65,6 +65,20 @@ def list_assessments(
                     assessed_from=assessed_from, assessed_to=assessed_to)
     items, total = RiskService(db).list(scope_for(user), f, sort, order == "desc", p.page, p.page_size)
     return _page(items, total, p)
+
+
+# CP3. Registered before /risk-assessments/{assessment_id} so "summary" is never parsed as an id.
+@router.get(
+    "/risk-assessments/summary", response_model=RiskSummaryResponse, summary="Devices per current risk level",
+    description=(
+        "Technicians, engineers (own hospital) and administrators (organization). Counts devices by the risk level "
+        "the database keeps from their latest assessment, plus `unassessed`. Archived devices are left out unless an "
+        "administrator sets `include_archived=true` (403 for other roles)."
+    ),
+)
+def risk_summary(hospital_id: Optional[uuid.UUID] = None, include_archived: bool = False, user: User = CurrentUser,
+                 db: Session = Depends(get_db)):
+    return RiskService(db).summary(scope_for(user), hospital_id, include_archived)
 
 
 @router.get("/risk-assessments/{assessment_id}", response_model=RiskAssessmentResponse, summary="Get a risk assessment")

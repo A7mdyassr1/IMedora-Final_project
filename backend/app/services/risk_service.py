@@ -86,6 +86,12 @@ def require_reader(scope: AccessScope, what: str) -> None:
         raise ForbiddenError(f"{what} are available to technicians, biomedical engineers and administrators.")
 
 
+def require_archived_access(scope: AccessScope, include_archived: bool) -> None:
+    """Decision 6 / B3.1: archived devices in lists and summaries are admin-only, never ignored silently."""
+    if include_archived and not scope.is_admin:
+        raise ForbiddenError("Only administrators can include archived devices.")
+
+
 def require_writer(scope: AccessScope, what: str) -> None:
     if scope.role not in WRITERS:
         raise ForbiddenError(f"Only biomedical engineers and administrators can record or correct {what}.")
@@ -121,6 +127,17 @@ class RiskService:
             raise NotFoundError("Device not found.")
         f.device_id = device_id
         return self.list(scope, f, "assessed_at", True, page, page_size)
+
+    def summary(self, scope: AccessScope, hospital_id: Optional[uuid.UUID], include_archived: bool) -> dict:
+        """CP3: devices per current risk level (the trigger's cached value, never recomputed) plus
+        `unassessed`. Archived devices only for administrators who ask (Decision 6, as the device list)."""
+        require_reader(scope, self.WHAT)
+        require_archived_access(scope, include_archived)
+        counts = self.repo.level_counts(scope, hospital_id, include_archived)
+        by_level = {level.value: counts.get(level, 0) for level in RiskLevel}
+        by_level["unassessed"] = counts.get(None, 0)
+        return {"total": sum(by_level.values()), "by_level": by_level, "hospital_id": hospital_id,
+                "include_archived": include_archived}
 
     # ---- writes -------------------------------------------------------------------------------------
     def _check_device_state(self, device: Device, correction: bool) -> None:

@@ -12,7 +12,7 @@ it: under the device row lock before a write (`lock_device_risk`) and again afte
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -21,6 +21,7 @@ from app.core.access import AccessScope
 from app.core.enums import RiskLevel
 from app.models.device import Device
 from app.models.risk import RiskAssessment
+from app.repositories.device_repository import scope_conditions
 from app.repositories.pagination import paginate
 
 SORT = {"assessed_at": RiskAssessment.assessed_at, "created_at": RiskAssessment.created_at,
@@ -105,3 +106,16 @@ class RiskRepository:
         """The cached level as the trigger left it (a fresh query, not the ORM identity map)."""
         value = self.db.scalar(select(Device.current_risk_level).where(Device.id == device_id))
         return RiskLevel(value) if value is not None else None
+
+    # ---- CP3: summary (reads the trigger's cache, never recomputes it) ---------------------------------
+    def level_counts(self, scope: AccessScope, hospital_id: Optional[uuid.UUID],
+                     include_archived: bool) -> Dict[Optional[RiskLevel], int]:
+        """Devices in the caller's device scope, counted by devices.current_risk_level (None =
+        never assessed). Archived devices only when asked for (admins; checked by the service)."""
+        stmt = select(Device.current_risk_level, func.count()).where(*scope_conditions(scope))
+        if hospital_id is not None:
+            stmt = stmt.where(Device.hospital_id == hospital_id)
+        if not include_archived:
+            stmt = stmt.where(Device.deleted_at.is_(None))
+        rows = self.db.execute(stmt.group_by(Device.current_risk_level)).all()
+        return {(RiskLevel(level) if level is not None else None): count for level, count in rows}

@@ -8,7 +8,7 @@ performed_at and next_due_date may change. Responses show staff by name (only st
 """
 import uuid
 from datetime import date, datetime
-from typing import Annotated, Optional
+from typing import Annotated, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
@@ -81,3 +81,35 @@ class QARecordResponse(BaseModel):
             performed_by=Performer(id=r.performer.id, name=r.performer.full_name, role=r.performer.role.name),
             created_at=r.created_at, updated_at=r.updated_at,
         )
+
+
+# ---- CP3 ----------------------------------------------------------------------------------------------
+class QASummaryResponse(BaseModel):
+    total: int
+    by_status: Dict[str, int] = Field(description="pass, fail and pending, always all three.")
+    by_type: Dict[str, int] = Field(description="inspection, calibration and compliance, always all three.")
+    hospital_id: Optional[uuid.UUID] = None
+    include_archived: bool
+
+
+class QADueItem(QARecordResponse):
+    due_status: Literal["overdue", "upcoming"]
+    days_until_due: int = Field(description="Negative when overdue.")
+
+    @classmethod
+    def build_due(cls, r, today: date) -> "QADueItem":
+        base = QARecordResponse.build(r).model_dump()
+        days = (r.next_due_date - today).days
+        return cls(**base, due_status="overdue" if days < 0 else "upcoming", days_until_due=days)
+
+
+class QADueList(BaseModel):
+    """The latest record per device and record type whose next due date is overdue or within
+    `within_days` of `today` (the database's date). Superseded records are never listed."""
+    items: List[QADueItem]
+    total: int
+    page: int
+    page_size: int
+    today: date
+    within_days: int
+    include_overdue: bool

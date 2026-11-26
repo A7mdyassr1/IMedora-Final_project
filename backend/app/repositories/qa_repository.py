@@ -8,9 +8,10 @@ lookup). Out of scope = 404.
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy import Date, cast, func, select
+from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.orm import Session
 
 from app.core.access import AccessScope
@@ -34,6 +35,16 @@ class QAFilters:
     performed_to: Optional[datetime] = None     # exclusive
     due_after: Optional[date] = None            # next_due_date on or after (inclusive)
     due_before: Optional[date] = None           # next_due_date on or before (inclusive)
+
+
+@dataclass
+class DueFilters:
+    within_days: int = 30
+    include_overdue: bool = True
+    hospital_id: Optional[uuid.UUID] = None
+    record_type: Optional[QARecordType] = None
+    device_id: Optional[uuid.UUID] = None
+    include_archived: bool = False
 
 
 def _scoped(scope: AccessScope) -> list:
@@ -94,3 +105,46 @@ class QARepository:
         """Row lock on the device (only the devices row), held until commit: the same lock every risk
         and maintenance writer of the device takes first, so lock order stays device -> record."""
         self.db.execute(select(Device.id).where(Device.id == device_id).with_for_update())
+
+    # ---- CP3: summary and due list -------------------------------------------------------------------
+    @staticmethod
+    def _live_devices(include_archived: bool) -> list:
+        """Decision 6: archived devices leave summaries and due lists unless an admin asks for them."""
+        if include_archived:
+            return []
+        return [QARecord.device_id.in_(select(Device.id).where(Device.deleted_at.is_(None)))]
+
+    def counts(self, scope: AccessScope, hospital_id: Optional[uuid.UUID],
+               include_archived: bool) -> Tuple[Dict[QAStatus, int], Dict[QARecordType, int]]:
+        conditions = [*_scoped(scope), *self._live_devices(include_archived)]
+        if hospital_id is not None:
+            conditions.append(QARecord.hospital_id == hospital_id)
+        by_status = dict(self.db.execute(select(QARecord.status, func.count()).where(*conditions)
+                                         .group_by(QARecord.status)).all())
+        by_type = dict(self.db.execute(select(QARecord.record_type, func.count()).where(*conditions)
+                                       .group_by(QARecord.record_type)).all())
+        return by_status, by_type
+
+    def due(self, scope: AccessScope, f: DueFilters, page: int, page_size: int) -> Tuple[List[QARecord], int]:
+        """D15: per (device, record type) only the LATEST record counts (performed_at, then created_at,
+        then id - deterministic); older ones are superseded and never due. Its next_due_date decides:
+        overdue = before today, upcoming = today .. today + within_days (the database's current_date).
+        Records without a next due date are never due."""
+        latest = select(QARecord.id).where(*_scoped(scope), *self._live_devices(f.include_archived))
+        for column, value in ((QARecord.hospital_id, f.hospital_id), (QARecord.record_type, f.record_type),
+                              (QARecord.device_id, f.device_id)):
+            if value is not None:
+                latest = latest.where(column == value)
+        latest = latest.ext(distinct_on(QARecord.device_id, QARecord.record_type)).order_by(
+            QARecord.device_id, QARecord.record_type, QARecord.performed_at.desc(), QARecord.created_at.desc(),
+            QARecord.id.desc())
+        today = func.current_date()
+        stmt = select(QARecord).where(QARecord.id.in_(latest), QARecord.next_due_date.is_not(None),
+                                      QARecord.next_due_date <= today + f.within_days)
+        if not f.include_overdue:
+            stmt = stmt.where(QARecord.next_due_date >= today)
+        stmt = stmt.order_by(QARecord.next_due_date.asc(), QARecord.id.asc())
+        return paginate(self.db, stmt, page, page_size)
+
+    def today(self) -> date:
+        return self.db.scalar(select(func.current_date()))

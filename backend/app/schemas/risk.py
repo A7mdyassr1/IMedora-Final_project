@@ -8,7 +8,7 @@ Responses show staff by name (only staff can read risk assessments).
 """
 import uuid
 from datetime import datetime
-from typing import Annotated, Optional
+from typing import Annotated, Dict, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
@@ -83,3 +83,12 @@ class RiskAssessmentResponse(BaseModel):
             assessed_by=Performer(id=a.assessor.id, name=a.assessor.full_name, role=a.assessor.role.name),
             created_at=a.created_at, updated_at=a.updated_at,
         )
+
+
+class RiskSummaryResponse(BaseModel):
+    """CP3. Devices counted by their current risk level as maintained by the database (latest
+    assessment), plus `unassessed` (no assessment yet)."""
+    total: int
+    by_level: Dict[str, int] = Field(description="low, medium, high, critical and unassessed, always all five.")
+    hospital_id: Optional[uuid.UUID] = None
+    include_archived: bool

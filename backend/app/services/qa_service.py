@@ -38,15 +38,17 @@ from sqlalchemy.orm import Session
 
 from app.core.access import AccessScope
 from app.core.db_errors import CONSTRAINT_MESSAGES
-from app.core.enums import QAStatus
+from app.core.enums import QARecordType, QAStatus
 from app.core.exceptions import AppError, BadRequestError, ConflictError, NotFoundError
 from app.models.device import Device
 from app.models.qa import QARecord
 from app.repositories.device_repository import DeviceRepository
-from app.repositories.qa_repository import QAFilters, QARepository
+from app.repositories.qa_repository import DueFilters, QAFilters, QARepository
 from app.schemas.qa import QARecordCreate, QARecordUpdate
 from app.services.audit_service import AuditService, snapshot
-from app.services.risk_service import aware, reject_future, require_reader, require_writer
+from app.services.risk_service import (
+    aware, reject_future, require_archived_access, require_reader, require_writer,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +109,25 @@ class QAService:
             raise NotFoundError("Device not found.")
         f.device_id = device_id
         return self.list(scope, f, "performed_at", True, page, page_size)
+
+    # ---- CP3: summary and due list ---------------------------------------------------------------------
+    def summary(self, scope: AccessScope, hospital_id: Optional[uuid.UUID], include_archived: bool) -> dict:
+        """All QA records in scope, counted by status and by type (archived devices: admins who ask)."""
+        require_reader(scope, self.WHAT)
+        require_archived_access(scope, include_archived)
+        by_status, by_type = self.repo.counts(scope, hospital_id, include_archived)
+        return {"total": sum(by_status.values()),
+                "by_status": {s.value: by_status.get(s, 0) for s in QAStatus},
+                "by_type": {t.value: by_type.get(t, 0) for t in QARecordType},
+                "hospital_id": hospital_id, "include_archived": include_archived}
+
+    def due(self, scope: AccessScope, f: DueFilters, page: int, page_size: int) -> Tuple[List[QARecord], int, date]:
+        """D15 / D18: the latest record per (device, record type), overdue and/or due within
+        `within_days`. Returns the records, the total and the database's today."""
+        require_reader(scope, self.WHAT)
+        require_archived_access(scope, f.include_archived)
+        items, total = self.repo.due(scope, f, page, page_size)
+        return items, total, self.repo.today()
 
     # ---- writes -------------------------------------------------------------------------------------
     @staticmethod
