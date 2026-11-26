@@ -5,8 +5,8 @@
 from fastapi import APIRouter
 
 from app.api.endpoints import (
-    attachments, auth, catalog, devices, health, maintenance, notifications, parts, qa_records, risk_assessments, structure,
-    tickets, users,
+    attachments, auth, catalog, device_history, devices, health, maintenance, notifications, parts, qa_records,
+    risk_assessments, structure, tickets, users,
 )
 
 api_v1_router = APIRouter()
@@ -31,3 +31,4 @@ api_v1_router.include_router(notifications.router)
 api_v1_router.include_router(attachments.router)
 api_v1_router.include_router(risk_assessments.router)  # B6
 api_v1_router.include_router(qa_records.router)  # B6
+api_v1_router.include_router(device_history.router)  # B6

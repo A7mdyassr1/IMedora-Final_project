@@ -315,3 +315,39 @@ def test_seeded_notifications_stay_private(seed):
     for who in ("tech", "dept_icu", "tech_other"):
         box = c.get(f"{API}/notifications", headers=h[who], params={"page_size": 100}).json()
         assert all(not (n["related_ticket_id"] == ticket_id and n["type"] == "ticket_assigned") for n in box["items"]), who
+
+
+# ---- B6: risk assessments, QA records and device history on seeded data (read-only) ------------------
+def test_seeded_risk_levels_and_history_read_through_the_api(seed):
+    """DEV-001 has one critical assessment; DEV-002 a history low -> medium -> high. The cached level the
+    database trigger keeps is what the API reports; histories come newest first. Nothing is written."""
+    c, h, devs = seed["client"], seed["h"], seed["devices"]
+    one = c.get(f"{API}/devices/{devs['DEV-001'].id}/risk-assessments", headers=h["tech"]).json()
+    assert one["total"] >= 1 and one["items"][0]["risk_level"] == "critical"
+    assert one["items"][0]["device"]["current_risk_level"] == "critical"
+    hist = c.get(f"{API}/devices/{devs['DEV-002'].id}/risk-assessments", headers=h["tech"]).json()["items"]
+    assert [a["risk_level"] for a in hist][:3] == ["high", "medium", "low"]
+    assert c.get(f"{API}/devices/{devs['DEV-002'].id}", headers=h["tech"]).json()["current_risk_level"] == hist[0]["risk_level"]
+    feed = c.get(f"{API}/devices/{devs['DEV-002'].id}/history", headers=h["tech"], params={"types": "risk_assessment"}).json()
+    assert [e["risk_assessment"]["risk_level"] for e in feed["items"]][:3] == ["high", "medium", "low"]
+    summary = c.get(f"{API}/risk-assessments/summary", headers=h["tech"]).json()
+    assert summary["by_level"]["critical"] >= 1 and summary["by_level"]["high"] >= 1
+    assert c.get(f"{API}/devices/{devs['DEV-001'].id}/risk-assessments", headers=h["dept_icu"]).status_code == 403
+    assert c.get(f"{API}/devices/{devs['DEV-001'].id}/risk-assessments", headers=h["tech_other"]).status_code == 404
+
+
+def test_seeded_qa_record_and_due_list_read_through_the_api(seed):
+    """DEV-001's seeded calibration (pass) is readable; the due list classifies it by the database's
+    date; department users have no access to QA data and see only their own tickets in a history."""
+    c, h, dev = seed["client"], seed["h"], seed["devices"]["DEV-001"]
+    records = c.get(f"{API}/devices/{dev.id}/qa-records", headers=h["tech"], params={"record_type": "calibration"}).json()
+    assert records["total"] >= 1 and records["items"][0]["status"] == "pass"
+    latest = records["items"][0]
+    due = c.get(f"{API}/qa-records/due", headers=h["tech"], params={"device_id": str(dev.id), "within_days": 365}).json()
+    listed = {i["id"]: i for i in due["items"]}
+    if latest["next_due_date"] and latest["next_due_date"] < due["today"]:
+        assert listed[latest["id"]]["due_status"] == "overdue"
+    assert c.get(f"{API}/qa-records", headers=h["dept_icu"]).status_code == 403
+    own_history = c.get(f"{API}/devices/{dev.id}/history", headers=h["dept_icu"])
+    assert own_history.status_code == 200 and all(e["type"].startswith("ticket_") for e in own_history.json()["items"])
+    assert c.get(f"{API}/devices/{dev.id}/history", headers=h["dept_icu"], params={"types": "qa_record"}).status_code == 403

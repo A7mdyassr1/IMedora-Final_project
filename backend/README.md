@@ -325,6 +325,22 @@ Technicians, engineers (own hospital) and administrators (organization); departm
 
 **Due list rule:** for each device and record type only the **latest** record counts (by `performed_at`, then creation time, then id). An older record is superseded and never listed, even if its own due date is near. The latest record's `next_due_date` decides: before today = overdue (listed when `include_overdue`); today to today + `within_days` = upcoming. Records without a next due date are not listed.
 
+## Device history (B6 CP4)
+
+`GET /api/v1/devices/{id}/history`: one feed, newest first (equal times: by entry type name, alphabetically, then id), paged. Filters: `types` (comma-separated), `from` / `to` (inclusive).
+
+| `type` | Time | Shows |
+|---|---|---|
+| `ticket_reported` | ticket created | number, priority, **current** status, reporter |
+| `ticket_resolved` | `resolved_at` | number, priority, current status |
+| `maintenance_record` | `performed_at` | type, performer, linked ticket, number of parts used |
+| `risk_assessment` | `assessed_at` | level, assessor |
+| `qa_record` | `performed_at` | type, status, next due date, performer |
+
+- **Administrators** (organization), **engineers and technicians** (own hospital): every type; ticket entries follow exactly the rules of `GET /devices/{id}/tickets` (soft-deleted tickets excluded).
+- **Department users** (devices of their own department only; other departments 404): only `ticket_reported` / `ticket_resolved` entries of tickets **they reported**, staff shown as roles. Asking for another type is 403 before any lookup.
+- Archived devices keep a readable history. Closed and cancelled tickets have no time of their own and show as the ticket's current status; the step-by-step story stays in the ticket timeline. Built from existing tables only.
+
 ## Planned API Domains
 
 - Authentication
@@ -337,8 +353,8 @@ Technicians, engineers (own hospital) and administrators (organization); departm
 - Parts (B5)
 - Notifications, attachments (B5)
 - Reports / Analytics
-- Risk Management
-- Quality Assurance
+- Risk Management (B6)
+- Quality Assurance (B6)
 - AI Assistant (proxy to the `ai/` service)
 
 ## Status
@@ -380,3 +396,5 @@ Technicians, engineers (own hospital) and administrators (organization); departm
   - **Checkpoint 1:** risk assessments; the trigger-maintained `current_risk_level` with the device row locked for every write; equal-time guard; audit of the device's level changes.
   - **Checkpoint 2:** QA records; status rules (a pass / fail result is final); the next-due-date rule checked with the database's date (422).
   - **Checkpoint 3:** risk and QA summaries; the QA due list (latest record per device and type only).
+  - **Checkpoint 4:** device history `GET /devices/{id}/history` (deferred since B4), per-role visibility; seed smoke tests for the seeded risk / QA data.
+  - No schema change and no migration.
