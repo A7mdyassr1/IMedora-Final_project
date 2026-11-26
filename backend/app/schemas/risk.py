@@ -24,7 +24,8 @@ class RiskAssessmentCreate(BaseModel):
     device_id: uuid.UUID = Field(description="The device being assessed (must be in your scope).")
     risk_level: RiskLevel
     notes: Optional[Notes] = None
-    assessed_at: Optional[datetime] = Field(default=None, description="Defaults to now. Not in the future. "
+    assessed_at: Optional[datetime] = Field(default=None, description="Defaults to now (the server time when the "
+                                                                      "assessment is saved). Not in the future. "
                                                                       "ISO 8601; UTC if no offset.")
 
 

@@ -88,9 +88,12 @@ class RiskRepository:
             stmt = stmt.where(RiskAssessment.id != exclude_id)
         return self.db.scalar(stmt.limit(1)) is not None
 
-    def now(self) -> datetime:
-        """The database's now() (transaction start): the value PostgreSQL itself would default to."""
-        return self.db.scalar(select(func.now()))
+    def time_under_lock(self) -> datetime:
+        """The database clock at this moment (clock_timestamp(), NOT now() = the transaction start).
+        Called while the device row lock is held: default assessment times of one device then follow
+        the order in which writers get the lock, which is the order in which they are saved (B6-L2).
+        now() was read from a transaction that may have started before an earlier writer saved."""
+        return self.db.scalar(select(func.clock_timestamp()))
 
     # ---- devices.current_risk_level: READ ONLY (the trigger is its only writer) ---------------------
     def lock_device_risk(self, device_id: uuid.UUID) -> Optional[RiskLevel]:

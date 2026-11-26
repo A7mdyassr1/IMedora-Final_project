@@ -9,11 +9,13 @@ parallel, check that they WAIT for it, release it, and check the final cache and
 """
 import threading
 import time
+from datetime import datetime
 
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 from app.core.database import get_session_factory
+from app.repositories.risk_repository import RiskRepository
 from tests.risk_scene import rq  # noqa: F401
 from tests.scope_scene import scene  # noqa: F401
 from tests.test_devices_flow import cat  # noqa: F401
@@ -124,3 +126,47 @@ def test_risk_and_maintenance_writes_on_one_device_do_not_deadlock(client, rq):
     assert rq["level"]("icu") == "high" == _latest(rq, dev)
     device = client.get(f"{API}/devices/{dev}", headers=h["admin"]).json()
     assert device["next_maintenance_due_date"] == due
+
+
+def test_default_times_follow_the_order_writers_get_the_device_lock(client, rq, monkeypatch):
+    """B6-L2 regression. Two assessments of one device without `assessed_at`. Writer A's transaction
+    starts FIRST but A gets the device lock only AFTER writer B has saved. The default time must come
+    from the moment the lock is held, so A - saved last - is the latest assessment and the cached level
+    is A's. With the transaction-start default, A got the EARLIER time: B stayed the "latest" although A
+    was saved after it. The lock itself is unchanged (A still waits for it in the other tests)."""
+    h, dev = rq["h"], rq["d"]["icu"]["id"]
+    a_waiting, b_saved = threading.Event(), threading.Event()
+    original, calls, guard = RiskRepository.lock_device_risk, [], threading.Lock()
+
+    def lock_device_risk(self, device_id):
+        with guard:
+            calls.append(device_id)
+            first = len(calls) == 1
+        if first:                       # writer A: transaction already started, lock not yet taken
+            a_waiting.set()
+            assert b_saved.wait(30), "writer B never finished"
+        return original(self, device_id)
+
+    monkeypatch.setattr(RiskRepository, "lock_device_risk", lock_device_risk)
+    results = {}
+
+    def writer_a():
+        with TestClient(client.app) as c:
+            results["a"] = c.post(f"{API}/risk-assessments", headers=h["eng_h1"],
+                                  json={"device_id": dev, "risk_level": "high"})
+
+    thread = threading.Thread(target=writer_a)
+    thread.start()
+    assert a_waiting.wait(30), "writer A never reached the device lock"
+    time.sleep(0.05)                    # B's transaction starts strictly after A's
+    with TestClient(client.app) as c:
+        results["b"] = c.post(f"{API}/risk-assessments", headers=h["admin"], json={"device_id": dev, "risk_level": "low"})
+    b_saved.set()
+    thread.join(timeout=30)
+
+    assert [results[k].status_code for k in "ab"] == [201, 201], [results[k].text for k in "ab"]
+    at = {k: datetime.fromisoformat(results[k].json()["assessed_at"]) for k in "ab"}
+    assert at["a"] > at["b"], at                         # saved last = latest
+    assert _latest(rq, dev) == "high" == rq["level"]("icu")
+    assert results["a"].json()["device"]["current_risk_level"] == "high"
+    _assert_chain(rq, dev, None, "high")                  # D17 rows: None -> low (B) -> high (A)

@@ -172,7 +172,7 @@ class RiskService:
         self._check_device_state(device, correction=False)               # 4.
         assessed_at = reject_future(data.assessed_at, "The assessment date cannot be in the future.")  # 5.
         if assessed_at is None:
-            assessed_at = self.repo.now()  # what the column default would give, made explicit for D7
+            assessed_at = self.repo.time_under_lock()  # "now", read under the lock (B6-L2), explicit for D7
         if self.repo.same_time_exists(device.id, assessed_at):           # 6.
             raise DuplicateAssessmentTimeError()
         assessment = self.repo.add(RiskAssessment(                      # 7. the trigger runs here

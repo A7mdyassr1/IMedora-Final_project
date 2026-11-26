@@ -292,7 +292,7 @@ Nobody is notified of their own action; inactive or deleted users are skipped; t
 
 - **Order of checks:** the role first (technicians and department users get **403 on every write without any lookup**; department users get 403 on every read), then existence and scope (404), then the device's state (400).
 - **`devices.current_risk_level` is written only by the database trigger** (latest `assessed_at` wins; a backdated assessment never overrides a newer one). The backend locks the device row before every risk write so concurrent writes cannot leave a stale level, and only *reads* the level before and after the write. Responses show it in `device.current_risk_level`.
-- `assessed_at` defaults to now; never in the future (400). A second assessment of the same device at exactly the same time is refused (409 `duplicate_assessment_time`): the trigger has no tie-breaker.
+- `assessed_at` defaults to now: the database time once the device lock is held, so assessments of one device saved without a time are ordered as they were saved (B6-L2); never in the future (400). A second assessment of the same device at exactly the same time is refused (409 `duplicate_assessment_time`): the trigger has no tie-breaker.
 - No new assessments or corrections on archived devices or in inactive hospitals (400); their history stays readable. Decommissioned and out-of-service devices can be assessed.
 - **Audit:** every create and correction, in the same transaction. When the trigger changes a device's level, a `devices` `update` row records `{"current_risk_level": before}` → `{"current_risk_level": after, "cause": {...}}` (team decision D17).
 - No delete endpoint: assessments are history.
