@@ -5,6 +5,7 @@ devices readable; role-first 403 for department users asking for other entry typ
 """
 import uuid
 
+from psycopg2.extensions import ISOLATION_LEVEL_READ_COMMITTED, ISOLATION_LEVEL_REPEATABLE_READ
 from sqlalchemy import event, text
 
 from app.core.database import get_engine, get_session_factory
@@ -191,12 +192,14 @@ def test_total_and_page_come_from_one_snapshot(client, rq):
     h, dev = rq["h"], rq["d"]["icu"]["id"]
     saved = [rq["assess"](h["eng_h1"], "icu", level, assessed_at=at).json()["id"]
              for level, at in (("low", T1), ("high", T2))]
-    fired = []
+    fired, used = [], {}
 
     def save_between_count_and_page(conn, cursor, statement, parameters, context, executemany):
         if fired or "count(*)" not in statement or "risk_assessments" not in statement:
             return
         fired.append(True)
+        used["raw"] = conn.connection.dbapi_connection                 # the history request's connection
+        used["during"] = used["raw"].isolation_level
         with get_session_factory()() as other:      # a concurrent writer, committed at once
             other.execute(text(
                 "INSERT INTO risk_assessments (organization_id, hospital_id, device_id, assessed_by, risk_level, assessed_at) "
@@ -211,8 +214,9 @@ def test_total_and_page_come_from_one_snapshot(client, rq):
         event.remove(get_engine(), "after_cursor_execute", save_between_count_and_page)
     assert fired == [True]
     assert body["total"] == len(body["items"]) == 2, body
-    with get_session_factory()() as s:   # the pooled connection is back on the default isolation level
-        assert s.scalar(text("SHOW transaction_isolation")) == "read committed"
+    # that very connection ran REPEATABLE READ, and went back to the pool on the default level again
+    assert used["during"] == ISOLATION_LEVEL_REPEATABLE_READ
+    assert used["raw"].isolation_level in (None, ISOLATION_LEVEL_READ_COMMITTED), used["raw"].isolation_level
     assert _ids(body) == [("risk_assessment", saved[1]), ("risk_assessment", saved[0])]
 
     after = _history(client, h["eng_h1"], dev, types="risk_assessment", page_size=50).json()   # the next read sees it

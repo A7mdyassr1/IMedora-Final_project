@@ -11,11 +11,15 @@ JSON field the API returns for it; docs/api/mobile-contract.md is the readable v
    tickets" and the device's tickets, open the ticket with its timeline and photo, read notifications.
    Every response is checked against the same mapping. Skipped unless TEST_DATABASE_URL is set.
 
-A change that breaks the mobile app's parsing fails here first.
+A change that breaks the mobile app's parsing fails here first. The Dart side is read too: the enums and
+the model fields below are compared with the Dart source in mobile/ (read only), so a change in the app
+that this contract does not cover fails as well.
 """
 import io
 import re
+from pathlib import Path
 
+import pytest
 from PIL import Image
 
 from tests.scope_scene import scene  # noqa: F401
@@ -107,6 +111,60 @@ def _check(body, model, nullable_ok=True):
     for dart_field, (_schema, path, nullable) in MOBILE_MODELS[model].items():
         value = _value(body, path)
         assert value is not None or (nullable and nullable_ok), f"{model}.{dart_field} ({path}) is null"
+
+
+# ---- 0. the Dart source (mobile/, read only) -------------------------------------------------------------------
+MOBILE_FEATURES = Path(__file__).resolve().parents[2] / "mobile" / "lib" / "features"
+DART_FILES = {"auth": "auth/domain/auth_user.dart", "device": "devices/domain/device.dart",
+              "ticket": "tickets/domain/ticket.dart", "notification": "notifications/domain/notification.dart"}
+# contract model -> (Dart file, Dart class)
+DART_CLASSES = {"AuthSession": ("auth", "AuthSession"), "AuthUser": ("auth", "AuthUser"), "Device": ("device", "Device"),
+                "Ticket": ("ticket", "Ticket"), "TicketUpdate": ("ticket", "TicketUpdate"),
+                "TicketAttachment": ("ticket", "TicketAttachment"), "AppNotification": ("notification", "AppNotification")}
+
+
+def _dart(key):
+    path = MOBILE_FEATURES / DART_FILES[key]
+    if not path.exists():
+        pytest.skip(f"mobile source not present: {path}")
+    return path.read_text(encoding="utf-8")
+
+
+def _snake(name):
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
+
+
+def _dart_enum(source, name):
+    body = re.search(rf"enum {name}\s*\{{([^}}]*)\}}", source).group(1)
+    return [v.strip() for v in body.split(",") if v.strip()]
+
+
+def _dart_fields(source, cls):
+    start = source.index(f"class {cls} ")
+    end = source.find("\nclass ", start + 1)
+    body = source[start:end if end != -1 else len(source)]
+    return set(re.findall(r"^\s*final\s+[\w<>?, ]+?\s+(\w+);", body, re.M))
+
+
+def test_the_contract_enums_are_the_dart_enums():
+    device, ticket, note = _dart("device"), _dart("ticket"), _dart("notification")
+    assert {_snake(v) for v in _dart_enum(device, "DeviceStatus")} == DART_ENUMS["DeviceStatus"]
+    assert set(_dart_enum(device, "DeviceCriticality")) == DART_ENUMS["Criticality"]
+    assert set(_dart_enum(ticket, "TicketPriority")) == DART_ENUMS["TicketPriority"]
+    assert {_snake(v) for v in _dart_enum(ticket, "TicketStatus")} == DART_ENUMS["TicketStatus"]
+    labels = set(re.findall(r"ProblemCategory\.\w+ => '([^']+)'", ticket))
+    assert len(_dart_enum(ticket, "ProblemCategory")) == len(labels) and labels == DART_ENUMS["ProblemCategory"]
+    api_values = set(re.findall(r"^\s*\w+\('([a-z_]+)'\)", note, re.M)) - {"other"}
+    assert api_values == NOTIFICATION_TYPES
+
+
+def test_the_contract_maps_every_dart_field():
+    """Every `final` field of the app's models is mapped (a new Dart field fails here until the contract
+    says where it comes from), and no mapping names a field the app does not have."""
+    mapped = {model: set(fields) for model, fields in MOBILE_MODELS.items()}
+    mapped["Ticket"] |= mapped.pop("TicketDetail")
+    for model, (key, cls) in DART_CLASSES.items():
+        assert _dart_fields(_dart(key), cls) == mapped[model], model
 
 
 # ---- 1. the OpenAPI document ---------------------------------------------------------------------------------

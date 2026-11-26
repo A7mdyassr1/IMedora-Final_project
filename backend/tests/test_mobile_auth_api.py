@@ -7,14 +7,18 @@
   (not the account itself, not again while an earlier one is unread); audited with no actor.
 Skipped unless TEST_DATABASE_URL is set; the `world` fixture removes everything it created.
 """
+import logging
+import threading
 import uuid
 
+from fastapi.testclient import TestClient
 from sqlalchemy import select, text
 
 from app.core.database import get_session_factory
 from app.core.security import hash_password
 from app.models import Role, User
 from app.schemas.auth import FORGOT_PASSWORD_MESSAGE
+from app.services.notification_service import Notifier
 from tests.world import API, PW, auth, login
 
 KIND = "password_reset_requested"
@@ -142,3 +146,52 @@ def test_bad_bodies_are_422(client, world):
     for body in ({}, {"email": ""}, {"identifier": "x" * 256}):
         r = client.post(f"{API}/auth/forgot-password", json=body)
         assert r.status_code == 422 and r.json()["error"]["code"] == "validation_error", (body, r.text)
+
+
+def test_requests_for_two_admins_at_once_do_not_deadlock(client, world, monkeypatch):
+    """Review finding: requests for admin A and admin B at the same time. Each request locks its own
+    account row, then inserts a notification for the OTHER admin, whose foreign key takes a KEY SHARE
+    lock on that admin's row. With FOR UPDATE the two transactions waited for each other (deadlock, one
+    request lost). The account lock is FOR NO KEY UPDATE, which foreign-key checks do not wait for."""
+    org, second = world["org"], f"admin2-{world['sfx']}@b2.test"
+    _add_admin(world, second)
+    both_locked = threading.Barrier(2, timeout=10)
+    original = Notifier.password_reset_requested
+
+    def at_the_same_time(self, user):
+        try:
+            both_locked.wait()        # each request holds its own account's row lock here
+        except threading.BrokenBarrierError:
+            pass
+        return original(self, user)
+
+    monkeypatch.setattr(Notifier, "password_reset_requested", at_the_same_time)
+    statuses = []
+
+    def ask(email):
+        with TestClient(client.app) as c:
+            statuses.append(_forgot(c, email).status_code)
+
+    threads = [threading.Thread(target=ask, args=(email,)) for email in (world["admin"], second)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+    assert statuses == [202, 202]
+    assert sorted(r[0] for r in _requests(org)) == sorted([world["admin"], second])   # each told about the other
+
+
+def test_the_answer_does_not_wait_for_the_processing(client, world, monkeypatch, caplog):
+    """The request is processed after the 202 is sent (BackgroundTasks, own session): even when the
+    processing fails the caller gets the same answer, and the failure is only logged."""
+    from app.services.auth_service import AuthService
+
+    def broken(self, identifier):
+        raise RuntimeError("database gone")
+
+    monkeypatch.setattr(AuthService, "request_password_reset", broken)
+    with caplog.at_level(logging.ERROR, logger="app.services.auth_service"):
+        r = _forgot(client, world["staff"])
+    assert (r.status_code, r.json()["message"]) == (202, FORGOT_PASSWORD_MESSAGE)
+    assert "Password reset request could not be processed" in caplog.text
+    assert world["staff"] not in caplog.text                     # the typed identifier is never logged

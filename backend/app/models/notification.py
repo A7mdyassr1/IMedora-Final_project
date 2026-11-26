@@ -7,7 +7,8 @@ Database rules declared here (enforced by PostgreSQL):
 - is_read = true needs read_at (ck_notification_read_has_timestamp), and read_at >= created_at
   (ck_notification_read_after_created): the backend sets read_at with the DATABASE clock.
 - related_ticket_id is SET NULL when the ticket row is deleted (tickets are only soft-deleted).
-- notification_type is free text; the backend writes only the five types the mobile app knows.
+- notification_type is free text; the backend writes the five types the mobile app knows, plus
+  `password_reset_requested` for administrators (B8).
 """
 import uuid
 from datetime import datetime

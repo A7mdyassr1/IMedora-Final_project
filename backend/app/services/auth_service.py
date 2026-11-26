@@ -4,6 +4,7 @@ from typing import Optional, Tuple
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.database import get_session_factory
 from app.core.exceptions import BadRequestError, UnauthorizedError
 from app.core.security import create_access_token, decode_token, dummy_hash, hash_password, stamp_matches, verify_password
 from app.models.user import User
@@ -54,20 +55,26 @@ class AuthService:
         return user, token, expires_in
 
     def request_password_reset(self, identifier: str) -> None:
-        """POST /auth/forgot-password (B8, team decision 2026-11-26). No e-mail service exists, so a
-        request for an account that can sign in notifies the organization's administrators in-app; one
-        of them sets a new password (POST /users/{id}/reset-password). Unknown or blocked accounts:
-        nothing is stored. The endpoint answers the same in every case (no account enumeration)."""
+        """POST /auth/forgot-password (B8, team decision 2026-11-26), run AFTER the 202 is sent (see
+        process_password_reset_request). No e-mail service exists, so a request for an account that can
+        sign in notifies the organization's administrators in-app; one of them sets a new password
+        (POST /users/{id}/reset-password). Unknown or blocked accounts: nothing is stored."""
         user = self.users.get_by_email(identifier)
         if user is None:
             logger.info("Password reset requested for an unknown identifier")  # never log what was typed
             return
+        # Lock the account row first, then check it (no gap for a deactivation in between). The lock
+        # serializes requests for the SAME account, so "already notified" is decided one at a time.
+        # FOR NO KEY UPDATE, not FOR UPDATE: foreign-key checks (a notification or audit row that
+        # references a user takes KEY SHARE on that user) do not wait for it. With FOR UPDATE, requests
+        # for two admins at the same time deadlocked: each inserts a notification for the other.
+        self.db.execute(select(User.id).where(User.id == user.id).with_for_update(key_share=True))
+        self.db.refresh(user)
         reason = self.account_block_reason(user)
         if reason is not None:
+            self.db.rollback()
             logger.info("Password reset request ignored (%s) user_id=%s", reason, user.id)
             return
-        # Serialize requests for the same account, so "already notified" is decided one at a time.
-        self.db.execute(select(User.id).where(User.id == user.id).with_for_update())
         sent = Notifier(self.db, AuditService(self.db)).password_reset_requested(user)
         self.db.commit()
         logger.info("Password reset requested user_id=%s admins_notified=%s", user.id, sent)
@@ -98,3 +105,14 @@ class AuthService:
         AuditService(self.db).updated(user.id, user, snapshot(user), extra_new=dict(PASSWORD_CHANGED))
         self.db.commit()
         logger.info("Password changed user_id=%s", user.id)
+
+
+def process_password_reset_request(identifier: str) -> None:
+    """Background task of POST /auth/forgot-password, run after the response is sent, in its own
+    session: the response (status, body and time) is then the same whether or not the account exists.
+    Failures are logged only: the caller already has the generic answer."""
+    try:
+        with get_session_factory()() as db:
+            AuthService(db).request_password_reset(identifier)
+    except Exception:  # noqa: BLE001 - nobody is waiting for this result
+        logger.exception("Password reset request could not be processed")

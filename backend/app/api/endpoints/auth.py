@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, Response
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -8,7 +8,7 @@ from app.schemas.auth import (
     ChangePasswordRequest, ForgotPasswordRequest, ForgotPasswordResponse, LoginRequest, TokenResponse,
 )
 from app.schemas.user import UserResponse
-from app.services.auth_service import AuthService
+from app.services.auth_service import AuthService, process_password_reset_request
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -34,12 +34,14 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
         "the organization's administrators receive an in-app notification (`password_reset_requested`) and set a "
         "new password with `POST /users/{id}/reset-password`. An administrator who still has an unread request "
         "for the same account is not notified again.\n\n"
-        "The answer is always `202` with the same message, whether or not the account exists, so it cannot be "
-        "used to find out which emails are registered."
+        "Every well-formed request gets `202` with the same message, whether or not the account exists. The "
+        "request is processed after the answer is sent, so the answer's timing does not depend on it either. "
+        "A request for the organization's only administrator notifies nobody (the account itself is never "
+        "notified). Not rate limited: limit it at the reverse proxy."
     ),
 )
-def forgot_password(body: ForgotPasswordRequest, db: Session = Depends(get_db)):
-    AuthService(db).request_password_reset(body.identifier)
+def forgot_password(body: ForgotPasswordRequest, background: BackgroundTasks):
+    background.add_task(process_password_reset_request, body.identifier)
     return ForgotPasswordResponse()
 
 

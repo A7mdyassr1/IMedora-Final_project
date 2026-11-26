@@ -33,8 +33,8 @@ class ForgotPasswordRequest(BaseModel):
 
 
 class ForgotPasswordResponse(BaseModel):
-    message: str = Field(default=FORGOT_PASSWORD_MESSAGE, description="Always the same text: the answer never "
-                                                                      "reveals whether an account exists.")
+    message: str = Field(default=FORGOT_PASSWORD_MESSAGE, description="Always the same text: the answer does not "
+                                                                      "reveal whether an account exists.")
 
 
 class ChangePasswordRequest(BaseModel):
