@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.access import AccessScope
 from app.core.enums import Criticality, DeviceStatus, RiskLevel
 from app.models.catalog import DeviceModel
+from app.models.department import Department
 from app.models.device import Device
 from app.repositories.pagination import paginate
 
@@ -124,7 +125,10 @@ class DeviceRepository:
         if f.q:
             like = f"%{f.q.strip()}%"
             stmt = stmt.where(
-                or_(Device.name.ilike(like), Device.device_code.ilike(like), Device.serial_number.ilike(like), Device.qr_identifier.ilike(like))
+                or_(Device.name.ilike(like), Device.device_code.ilike(like), Device.serial_number.ilike(like),
+                    Device.qr_identifier.ilike(like),
+                    # B8: the mobile device picker searches by name, code AND department (Master Instructions 5)
+                    Device.department_id.in_(select(Department.id).where(Department.name.ilike(like))))
             )
         column = SORT_COLUMNS[sort]
         stmt = stmt.order_by(column.desc() if descending else column.asc(), Device.id)

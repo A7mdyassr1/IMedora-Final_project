@@ -33,7 +33,7 @@ def list_devices(
     status: Optional[DeviceStatus] = None,
     criticality: Optional[Criticality] = None,
     risk_level: Optional[RiskLevel] = None,
-    q: Optional[str] = Query(None, max_length=100, description="Search name, device code, serial number or QR identifier"),
+    q: Optional[str] = Query(None, max_length=100, description="Search name, device code, serial number, QR identifier or department name"),
     include_archived: bool = False,
     sort: Literal["name", "device_code", "status", "criticality", "created_at", "next_maintenance_due_date"] = "name",
     order: Literal["asc", "desc"] = "asc",
