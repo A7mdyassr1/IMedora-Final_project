@@ -25,13 +25,13 @@ EXPECTED_MAPPED = sorted([
     # B5
     "maintenance_parts", "part_inventory", "parts", "notifications", "attachments",
     # B6
-    "risk_assessments",
+    "qa_records", "risk_assessments",
 ])
 B4_TABLES = ["maintenance_records", "maintenance_schedules", "maintenance_tickets", "maintenance_types", "ticket_assignments",
              # B5: the same exact-name checks for the new mirrors
              "maintenance_parts", "part_inventory", "parts", "notifications", "attachments",
              # B6
-             "risk_assessments"]
+             "qa_records", "risk_assessments"]
 
 
 @pytest.fixture
@@ -92,11 +92,14 @@ def test_primary_and_foreign_keys_match_including_ondelete(insp, table):
 
 
 def test_enum_labels_match_the_backend_enums(insp):
-    from app.core.enums import AuditAction, Criticality, DeviceStatus, RiskLevel, TicketPriority, TicketStatus
+    from app.core.enums import (
+        AuditAction, Criticality, DeviceStatus, QARecordType, QAStatus, RiskLevel, TicketPriority, TicketStatus,
+    )
     live = {e["name"]: e["labels"] for e in insp.get_enums()}
     for name, enum in (("device_status", DeviceStatus), ("device_criticality", Criticality),
                        ("risk_level", RiskLevel), ("audit_action", AuditAction),
-                       ("ticket_status", TicketStatus), ("ticket_priority", TicketPriority)):
+                       ("ticket_status", TicketStatus), ("ticket_priority", TicketPriority),
+                       ("qa_record_type", QARecordType), ("qa_status", QAStatus)):  # B6
         assert live.get(name) == [m.value for m in enum], name
 
 

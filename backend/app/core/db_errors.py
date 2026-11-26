@@ -34,6 +34,8 @@ CONSTRAINT_MESSAGES = {
     "ck_schedule_frequency_positive": "The maintenance frequency must be at least one day.",
     "ck_inventory_reorder_non_negative": "The reorder threshold cannot be negative.",
     "ck_maintenance_parts_quantity_positive": "The quantity of a used part must be at least one.",
+    # B6: the QA service checks this first, with the database's own date conversion (HTTP 422 either way)
+    "ck_qa_next_due_after_performed": "The next due date cannot be before the date the QA check was performed.",
     # composite foreign keys of maintenance records (B4 CP3; the service checks these first)
     "fk_record_ticket_same_device": "The ticket belongs to another device.",
     "fk_record_schedule_same_device_and_type": "The schedule belongs to another device or maintenance type.",

@@ -297,6 +297,22 @@ Nobody is notified of their own action; inactive or deleted users are skipped; t
 - **Audit:** every create and correction, in the same transaction. When the trigger changes a device's level, a `devices` `update` row records `{"current_risk_level": before}` → `{"current_risk_level": after, "cause": {...}}` (team decision D17).
 - No delete endpoint: assessments are history.
 
+## QA records (B6 CP2)
+
+Inspections, calibrations and compliance checks, in one table (`record_type`).
+
+| Endpoint | Who | Notes |
+|---|---|---|
+| `POST /api/v1/qa-records` | engineer (own hospital), admin | `{device_id, record_type, status?, findings?, performed_at?, next_due_date?}`; `status` defaults to `pending` |
+| `GET /api/v1/qa-records` | technician, engineer (own hospital), admin | Filters `device_id`, `hospital_id`, `record_type`, `status`, `performed_by`, `performed_from` / `performed_to`, `due_after` / `due_before`; sort `performed_at` (default), `next_due_date` (empty dates last), `created_at` |
+| `GET /api/v1/qa-records/{id}` | same | |
+| `GET /api/v1/devices/{id}/qa-records` | same | Newest first; optional `record_type` |
+| `PATCH /api/v1/qa-records/{id}` | engineer (own hospital), admin | `status`, `findings`, `performed_at`, `next_due_date` (`null` clears findings / next due date). Device, type and ownership fields cannot change (422) |
+
+- **Status:** only `pending` → `pass` or `fail`. A `pass` / `fail` result is final: any other change is 409 `invalid_qa_status_transition` (sending the current status again is fine). Findings and dates of a finalized record can still be corrected, audited.
+- `next_due_date` must be on or after the **database's** date of `performed_at` (422 `constraint_violation`, from the pre-check or from `ck_qa_next_due_after_performed`). `performed_at` is never in the future (400).
+- Same order of checks and the same archived / inactive-hospital rules as risk assessments. A failed check creates no ticket, changes no device status and sends no notification. No delete endpoint.
+
 ## Planned API Domains
 
 - Authentication
@@ -350,3 +366,4 @@ Nobody is notified of their own action; inactive or deleted users are skipped; t
   - No schema change and no migration.
 - **B6 (risk assessments, QA records)** on `feature/backend-b6-jana` (approved plan `B6_PLAN.md`, Revision 5):
   - **Checkpoint 1:** risk assessments; the trigger-maintained `current_risk_level` with the device row locked for every write; equal-time guard; audit of the device's level changes.
+  - **Checkpoint 2:** QA records; status rules (a pass / fail result is final); the next-due-date rule checked with the database's date (422).

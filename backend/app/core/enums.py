@@ -23,6 +23,20 @@ class RiskLevel(StrEnum):
     CRITICAL = "critical"
 
 
+class QARecordType(StrEnum):
+    """Mirror of the PostgreSQL `qa_record_type` enum (migration 0004), in database order (B6)."""
+    INSPECTION = "inspection"
+    CALIBRATION = "calibration"
+    COMPLIANCE = "compliance"
+
+
+class QAStatus(StrEnum):
+    """Mirror of the PostgreSQL `qa_status` enum (migration 0004), in database order (B6)."""
+    PASS = "pass"
+    FAIL = "fail"
+    PENDING = "pending"
+
+
 class AuditAction(StrEnum):
     """Mirror of the PostgreSQL `audit_action` enum (migration 0005)."""
     INSERT = "insert"

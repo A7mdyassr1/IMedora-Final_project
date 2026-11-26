@@ -32,6 +32,13 @@ def rq(tickets, client):
     def correct(headers, assessment_id, **body):
         return client.patch(f"{API}/risk-assessments/{assessment_id}", headers=headers, json=body)
 
+    def qa(headers, device, record_type="calibration", **extra):
+        return client.post(f"{API}/qa-records", headers=headers,
+                           json={"device_id": device_id(device), "record_type": record_type, **extra})
+
+    def qa_update(headers, record_id, **body):
+        return client.patch(f"{API}/qa-records/{record_id}", headers=headers, json=body)
+
     def level(device):
         """devices.current_risk_level straight from the database (what the trigger wrote)."""
         return tickets["sql"]("SELECT current_risk_level::text FROM devices WHERE id = :d", d=device_id(device))[0][0]
@@ -42,8 +49,8 @@ def rq(tickets, client):
     def set_hospital_active(hospital_key, active):
         tickets["sql"]("UPDATE hospitals SET is_active = :a WHERE id = :h", a=active, h=tickets["world"][hospital_key])
 
-    yield dict(tickets, device_id=device_id, assess=assess, correct=correct, level=level, set_status=set_status,
-               set_hospital_active=set_hospital_active)
+    yield dict(tickets, device_id=device_id, assess=assess, correct=correct, qa=qa, qa_update=qa_update, level=level,
+               set_status=set_status, set_hospital_active=set_hospital_active)
 
     with get_session_factory()() as db:
         orgs = [uuid.UUID(tickets["world"]["org"]), uuid.UUID(tickets["world"]["other"])]

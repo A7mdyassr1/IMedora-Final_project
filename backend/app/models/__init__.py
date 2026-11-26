@@ -11,6 +11,7 @@ from app.models.maintenance import MaintenanceRecord, MaintenanceSchedule, Maint
 from app.models.notification import Notification
 from app.models.organization import Organization
 from app.models.part import MaintenancePart, Part, PartInventory
+from app.models.qa import QARecord
 from app.models.risk import RiskAssessment
 from app.models.role import Role
 from app.models.ticket import MaintenanceTicket, TicketAssignment
@@ -19,5 +20,6 @@ from app.models.user import User
 __all__ = [
     "Attachment", "AuditLog", "Base", "Department", "Device", "DeviceCategory", "DeviceModel", "Hospital",
     "Location", "MaintenancePart", "MaintenanceRecord", "MaintenanceSchedule", "MaintenanceTicket", "MaintenanceType", "Manufacturer",
-    "Notification", "Organization", "Part", "PartInventory", "RiskAssessment", "Role", "TicketAssignment", "User",
+    "Notification", "Organization", "Part", "PartInventory", "QARecord", "RiskAssessment", "Role", "TicketAssignment",
+    "User",
 ]
