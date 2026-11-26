@@ -7,4 +7,8 @@ This folder will contain API contract documentation for IMedora's backend, inclu
 - Authentication and authorization requirements
 - Versioning strategy
 
-No API documentation has been written yet — this is a placeholder, as no APIs have been implemented.
+Written so far:
+
+- [`mobile-contract.md`](mobile-contract.md): what the Flutter app calls and how each response field maps to its Dart models (B8).
+
+The full, always-current endpoint reference is the backend's OpenAPI page, `/docs`, on a running server.

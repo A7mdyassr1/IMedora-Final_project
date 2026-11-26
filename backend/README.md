@@ -339,11 +339,12 @@ Technicians, engineers (own hospital) and administrators (organization); departm
 
 - **Administrators** (organization), **engineers and technicians** (own hospital): every type; ticket entries follow exactly the rules of `GET /devices/{id}/tickets` (soft-deleted tickets excluded).
 - **Department users** (devices of their own department only; other departments 404): only `ticket_reported` / `ticket_resolved` entries of tickets **they reported**, staff shown as roles. Asking for another type is 403 before any lookup.
+- One consistent picture: the total, the page and the entries' details come from one database snapshot (REPEATABLE READ), even while other requests write (B6-L3).
 - Archived devices keep a readable history. Closed and cancelled tickets have no time of their own and show as the ticket's current status; the step-by-step story stays in the ticket timeline. Built from existing tables only.
 
 ## Mobile contract (B8)
 
-The Flutter app's requirements (Master Instructions section 5, `mobile/lib/features/*/domain`) mapped to this API. The mobile app's base URL **includes `/api/v1`** (e.g. `http://10.0.2.2:8000/api/v1`; `--dart-define=API_BASE_URL=...`).
+The Flutter app's requirements (Master Instructions section 5, `mobile/lib/features/*/domain`) mapped to this API. The full field-by-field contract is [`docs/api/mobile-contract.md`](../docs/api/mobile-contract.md), checked by `tests/test_mobile_contract.py`. The mobile app's base URL **includes `/api/v1`** (e.g. `http://10.0.2.2:8000/api/v1`; `--dart-define=API_BASE_URL=...`).
 
 - **Login:** `POST /auth/login` `{identifier, password}` answers `{token, user, ...}`. `token` is the same JWT as `access_token` (kept for existing clients). Send it as `Authorization: Bearer <token>`; `GET /auth/me` restores a stored session (401 when it is no longer valid).
 - **Forgot password:** `POST /auth/forgot-password` `{email}` (or `identifier`), no sign-in. Always `202` with the same message. IMedora has no e-mail service: for an account that can sign in, the organization's admins get one in-app `password_reset_requested` notification (not repeated while unread) and set a new password with `POST /users/{id}/reset-password`. Unknown or blocked accounts: nothing is stored. Audited (no actor).
@@ -405,4 +406,13 @@ The Flutter app's requirements (Master Instructions section 5, `mobile/lib/featu
   - **Checkpoint 2:** QA records; status rules (a pass / fail result is final); the next-due-date rule checked with the database's date (422).
   - **Checkpoint 3:** risk and QA summaries; the QA due list (latest record per device and type only).
   - **Checkpoint 4:** device history `GET /devices/{id}/history` (deferred since B4), per-role visibility; seed smoke tests for the seeded risk / QA data.
+  - No schema change and no migration.
+- **B8 (mobile contract)** on `feature/backend-b8-jana`, with the four B6 review findings:
+  - **B6-L1:** QA due-date regression test with a database time zone west of UTC.
+  - **B6-L2:** a default `assessed_at` is read under the device lock, so it follows the save order.
+  - **B6-L3:** device history is read in one snapshot (total, page and details agree).
+  - **B6-L4:** `PersonRef` and its builder live in `app/schemas/person.py`, shared by tickets and history.
+  - **Checkpoint 1:** `token` in the login response; `POST /auth/forgot-password` (admins notified in-app).
+  - **Checkpoint 2:** the device picker's `q` also matches the department name.
+  - **Checkpoint 3:** `docs/api/mobile-contract.md` and `tests/test_mobile_contract.py`.
   - No schema change and no migration.
