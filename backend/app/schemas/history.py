@@ -2,7 +2,7 @@
 
 One entry per event, newest first. `type` says which of the detail objects is filled in; the others
 are null. People are shown as the viewer may see them: department users see staff as a role
-description, never a name (decision Q9, the same PersonRef as tickets).
+description, never a name (decision Q9, the same PersonRef as tickets: app/schemas/person.py).
 """
 import uuid
 from datetime import date, datetime
@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 from app.core.enums import QARecordType, QAStatus, RiskLevel, TicketPriority, TicketStatus
 from app.schemas.maintenance import Performer
-from app.schemas.ticket import PersonRef
+from app.schemas.person import PersonRef
 
 EntryType = Literal["ticket_reported", "ticket_resolved", "maintenance_record", "risk_assessment", "qa_record"]
 

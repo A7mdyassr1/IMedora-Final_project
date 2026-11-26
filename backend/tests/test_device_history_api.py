@@ -220,3 +220,38 @@ def test_total_and_page_come_from_one_snapshot(client, rq):
     assert [e["at"][:10] for e in after["items"]] == ["2026-07-01", "2026-06-01", "2026-03-01"]
     # the response shape is unchanged
     assert set(body) == {"items", "total", "page", "page_size"} and (body["page"], body["page_size"]) == (1, 50)
+
+
+def test_reporters_look_exactly_as_in_ticket_responses(client, rq):
+    """B6-L4 compatibility: device history and ticket responses share ONE person rule (Q9) from
+    app/schemas/person.py. For every role, each history `reported_by` is identical, field for field, to
+    the same ticket's `reported_by` in GET /tickets/{id}: a department user sees themself by name and
+    other staff as roles with no id; staff see names and ids."""
+    h, d = rq["h"], rq["d"]
+    x = _build(client, rq)
+    dev = d["icu"]["id"]
+    seen = {}
+    for who in ("admin", "eng_h1", "tech_h1", "dept_icu"):
+        items = _history(client, h[who], dev, types="ticket_reported", page_size=100).json()["items"]
+        assert items, who
+        for e in items:
+            ticket = client.get(f"{API}/tickets/{e['ticket']['id']}", headers=h[who]).json()
+            assert e["ticket"]["reported_by"] == ticket["reported_by"], who
+            assert set(e["ticket"]["reported_by"]) == {"id", "name", "role"}
+            seen[(who, e["ticket"]["id"])] = e["ticket"]["reported_by"]
+    # the technician's report, as the department user may not see it (not theirs) vs as staff see it
+    staff_view = seen[("eng_h1", x["other"])]
+    assert staff_view["id"] is not None and staff_view["role"] == "technician"
+    own_view = seen[("dept_icu", x["own"])]
+    assert own_view["id"] is not None                      # themself: id and name
+    # an assignee seen by the department user on their own ticket: a role, no id (same builder)
+    assignees = client.get(f"{API}/tickets/{x['own']}", headers=h["dept_icu"]).json()["assignees"]
+    assert [(a["id"], a["name"], a["role"]) for a in assignees] == [(None, "Technician", "technician")]
+
+
+def test_person_model_is_the_same_class_everywhere():
+    """B6-L4: the ticket schemas re-export the shared model; OpenAPI keeps one `PersonRef` component."""
+    from app.schemas import history, person, ticket
+    assert ticket.PersonRef is person.PersonRef is history.PersonRef
+    assert issubclass(ticket.TicketAssignee, person.PersonRef)
+    assert not hasattr(ticket, "_person")

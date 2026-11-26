@@ -38,7 +38,7 @@ from app.schemas.history import (
     DeviceHistoryEntry, HistoryMaintenanceRecord, HistoryQARecord, HistoryRiskAssessment, HistoryTicket,
 )
 from app.schemas.maintenance import Performer
-from app.schemas.ticket import _person
+from app.schemas.person import person_ref
 from app.services.risk_service import aware
 from app.utils.ticket_number import ticket_number
 
@@ -106,7 +106,7 @@ class DeviceHistoryService:
                 t = tickets[r.id]
                 entry.ticket = HistoryTicket(
                     id=t.id, number=ticket_number(t.id), priority=t.priority, status=t.status,
-                    reported_by=_person(t.reporter, scope) if r.type == TICKET_REPORTED else None)
+                    reported_by=person_ref(t.reporter, scope) if r.type == TICKET_REPORTED else None)
             elif r.type == MAINTENANCE_RECORD:
                 m = records[r.id]
                 entry.maintenance_record = HistoryMaintenanceRecord(

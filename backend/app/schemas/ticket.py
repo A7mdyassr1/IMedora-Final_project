@@ -21,7 +21,8 @@ from typing import TYPE_CHECKING, Annotated, List, Optional
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, computed_field
 
 from app.core.enums import TicketPriority, TicketStatus
-from app.services.ticket_timeline import Person, TimelineItem, TimelineKind, person_display
+from app.schemas.person import PersonRef, person_ref
+from app.services.ticket_timeline import TimelineItem, TimelineKind
 from app.utils.problem_category import ProblemCategory, parse
 from app.utils.ticket_number import ticket_number
 
@@ -91,14 +92,6 @@ class TicketDevice(BaseModel):
     department_name: str
 
 
-class PersonRef(BaseModel):
-    """A person as the viewer may see them. For department users, staff appear as a role
-    description only: `id` is null and `name` is e.g. "Technician" (decision Q9)."""
-    id: Optional[uuid.UUID] = None
-    name: str
-    role: str
-
-
 class TicketAssignee(PersonRef):
     assigned_at: datetime
 
@@ -109,12 +102,6 @@ class TicketTimelineItem(BaseModel):
     status: TicketStatus = Field(description="The ticket's status after this event.")
     message: str
     actor: Optional[str] = None
-
-
-def _person(user, scope: "AccessScope") -> PersonRef:
-    p = Person(user.id, user.full_name, user.role.name)
-    visible = scope.sees_staff_names or user.id == scope.user_id
-    return PersonRef(id=user.id if visible else None, name=person_display(p, scope.user_id, scope.sees_staff_names), role=p.role)
 
 
 class TicketResponse(TicketNumberMixin):
@@ -140,8 +127,8 @@ class TicketResponse(TicketNumberMixin):
             device=TicketDevice(id=d.id, device_code=d.device_code, name=d.name,
                                 department_id=d.department_id, department_name=d.department.name),
             hospital_id=t.hospital_id,
-            reported_by=_person(t.reporter, scope),
-            assignees=[TicketAssignee(**_person(a.user, scope).model_dump(), assigned_at=a.assigned_at)
+            reported_by=person_ref(t.reporter, scope),
+            assignees=[TicketAssignee(**person_ref(a.user, scope).model_dump(), assigned_at=a.assigned_at)
                        for a in t.active_assignments],
             is_deleted=t.is_deleted, created_at=t.created_at, updated_at=t.updated_at, resolved_at=t.resolved_at,
             **extra,
@@ -162,7 +149,7 @@ class AttachmentResponse(BaseModel):
     @classmethod
     def build(cls, a, scope: "AccessScope") -> "AttachmentResponse":
         return cls(id=a.id, file_name=a.file_name, mime_type=a.mime_type, file_size_bytes=a.file_size_bytes,
-                   file_url=f"/api/v1/attachments/{a.id}", uploaded_by=_person(a.uploader, scope),
+                   file_url=f"/api/v1/attachments/{a.id}", uploaded_by=person_ref(a.uploader, scope),
                    created_at=a.created_at)
 
 
