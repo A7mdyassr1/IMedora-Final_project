@@ -393,6 +393,22 @@ Decision 7: the AI service will read hospital data only by calling this API back
 
 **Logs:** metadata only (user, role, sizes, outcome, duration). Never the question, history, answer, token or key. No audit row (a chat changes no data).
 
+## Dashboard & analytics (B10)
+
+Read-only aggregates under `/api/v1/analytics` (contract: [`docs/api/analytics.md`](../docs/api/analytics.md)):
+`overview`, `devices`, `maintenance`, `tickets`, `problem-devices`, `inventory`, `trends`.
+
+- Staff only: administrators (organization), biomedical engineers and technicians (own hospital);
+  department users get 403. `hospital_id` / `department_id` only narrow the scope; `include_archived` is
+  admin-only.
+- Metric rules are the AI package's (`ai/services/analytics/metrics.py`): failures = tickets not
+  cancelled, MTTR by resolution date, maintenance by performed date, preventive compliance by the active
+  preventive schedule. Days are the database's days.
+- Every number is a GROUP BY in PostgreSQL; each endpoint runs a fixed number of queries.
+- Tests: `tests/test_analytics_api.py` compares every endpoint, per role and filter, with an independent
+  re-implementation of the rules (`tests/analytics_oracle.py`) over a fixed dataset
+  (`tests/analytics_scene.py`), including time-zone day edges.
+
 ## Planned API Domains
 
 - Authentication
@@ -463,4 +479,10 @@ Decision 7: the AI service will read hospital data only by calling this API back
   - **Checkpoint 1:** the read-only AI token and its guard (Decision 7, conditions 1 and 4; the guard deferred from B3.1).
   - **Checkpoint 2:** `POST /ai/chat` proxy, built against the proposed AI service contract (`docs/api/ai-service-contract.md`, team decisions 2026-11-26).
   - **Checkpoints 3–4** (the data endpoints for `BackendDataProvider`; cross-scope and prompt-injection tests against the real AI service) need the AI owner.
+  - No schema change and no migration.
+- **B10 (dashboard & analytics)** on `feature/backend-b10-jana` (plan `B10_PLAN.md`; team decisions 2026-11-27):
+  - **Checkpoint 1:** analytics foundation (scope, filters, periods) and device statistics.
+  - **Checkpoint 2:** maintenance statistics with preventive compliance, ticket statistics with MTTR, problem devices.
+  - **Checkpoint 3:** inventory statistics and trends (day / week / month).
+  - **Checkpoint 4:** the dashboard overview; `docs/api/analytics.md`.
   - No schema change and no migration.
